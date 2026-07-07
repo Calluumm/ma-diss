@@ -1,6 +1,6 @@
 param(
-    [string]$InputRoot = "c:/Users/Student/Desktop/Masters/Dissertation/02_Data/01_Raw/Scenes/Sentinel2/longtimeseries",
-    [string]$OutputRoot = "c:/Users/Student/Desktop/Masters/Dissertation/02_Data/02_Processed/Sentinel2_Geomorphology_OTB",
+    [string]$InputRoot = "c:/input files",
+    [string]$OutputRoot = "C:/output file/",
     [double]$WaterMndwi = 0.05,
     [double]$WaterNdviMax = 0.15,
     [double]$VegetationNdvi = 0.30,
