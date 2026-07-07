@@ -1,6 +1,6 @@
 param(
-    [string]$ClassifiedRoot = "c:/Users/Student/Desktop/Masters/Dissertation/02_Data/02_Processed/Sentinel2_Geomorphology_OTB",
-    [string]$OutputRoot = "c:/Users/Student/Desktop/Masters/Dissertation/02_Data/02_Processed/Sentinel2_ChangeFramework",
+    [string]$ClassifiedRoot = "c:/classification input",
+    [string]$OutputRoot = "c:/outputk",
     [string[]]$MaskNames = @("water_mask", "vegetation_mask", "bare_sediment_mask", "cloud_mask", "active_channel_mask"),
     [switch]$AllMasks,
     [switch]$ApplyMorphologyCleanup,
@@ -250,9 +250,6 @@ $sceneDirs = @(
         } |
         Sort-Object Name
 )
-if ($sceneDirs.Count -lt 2) {
-    throw "need at least 2 dated classification folders in $ClassifiedRoot"
-}
 
 $anchorDate = $sceneDirs[0].Name
 $maskList = @(masklist -Root $ClassifiedRoot -Date $anchorDate -DefaultMasks $MaskNames)
@@ -280,7 +277,7 @@ for ($i = 0; $i -lt ($sceneDirs.Count - 1); $i++) {
 if ($ApplyMorphologyCleanup) {
     $dateNames = @($sceneDirs | Select-Object -ExpandProperty Name)
     foreach ($mask in $maskList) {
-        Write-Output ("applying morphology cleanup for {0} (radius={1})" -f $mask, $MorphologyRadius)
+        Write-Output ("applying morphlogy cleanup for {0} (radius={1})" -f $mask, $MorphologyRadius)
         cleanup -Mask $mask -Dates $dateNames
     }
 }
@@ -297,28 +294,5 @@ foreach ($mask in $maskList) {
 
 $catalogPath = Join-Path $OutputRoot "change_catalog.csv"
 $records | Export-Csv -Path $catalogPath -NoTypeInformation -Encoding UTF8
-
-$readme = Join-Path $OutputRoot "README_outputs.txt"
-@(
-    "change framework outputs",
-    "",
-    "Run mode: all-dates",
-    "Masks: $($maskList -join ', ')",
-    "Latest date: $latestDate",
-    "",
-    "Catalog:",
-    "- $catalogPath",
-    "",
-    "Latest mask snapshots:",
-    "- $latestDir",
-    "",
-    "Per-pair products:",
-    "- erosion_*.tif (1 = erosion)",
-    "- accretion_*.tif (1 = accretion)",
-    "- nochange_*.tif (1 = no change)",
-    "- change_class_*.tif (0 = no change, 1 = erosion, 2 = accretion, 255 = invalid/no-data)",
-    "- change_class_clean_*.tif (optional morphology cleanup on class 1/2 blobs; preserves class direction and 255)",
-    ""
-) | Set-Content -Path $readme -Encoding UTF8
 
 Write-Output "Change framework complete: $OutputRoot"
