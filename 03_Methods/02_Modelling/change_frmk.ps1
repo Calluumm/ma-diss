@@ -1,26 +1,47 @@
 param(
-    [string]$ClassifiedRoot = "c:/classification input",
-    [string]$OutputRoot = "c:/outputk",
+    [string]$ClassifiedRoot = "c:/input (classified images from the classifier script)",
+    [string]$OutputRoot = "c:/output",
     [string[]]$MaskNames = @("water_mask", "vegetation_mask", "bare_sediment_mask", "cloud_mask", "active_channel_mask"),
     [switch]$AllMasks,
     [switch]$ApplyMorphologyCleanup,
     [int]$MorphologyRadius = 1,
     [int]$CloudBufferRadius = 2
 )
-
+#make sure to run in strict mode or otb will not like you one bit
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 function gettool {
     param([string]$Name)
     $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    return $cmd.Source
+    if ($null -ne $cmd) {
+        if ($cmd.PSObject.Properties.Name -contains "Source" -and -not [string]::IsNullOrWhiteSpace($cmd.Source)) {
+            return $cmd.Source
+        }
+        if ($cmd.PSObject.Properties.Name -contains "Path" -and -not [string]::IsNullOrWhiteSpace($cmd.Path)) {
+            return $cmd.Path
+        }
+    }
+#hash out if running in a normal place lol
+    if ($Name -eq "otbApplicationLauncherCommandLine") {
+        $fallbacks = @(
+            "C:/Users/Student/Desktop/OTB/OTB-9.1.1-Win64/bin/otbApplicationLauncherCommandLine.exe"
+        )
+
+        foreach ($candidate in $fallbacks) {
+            if (Test-Path $candidate) {
+                return $candidate
+            }
+        }
+    }
+
+    throw "missing $Name"
 }
 function runotb {
     param([Parameter(Mandatory = $true)][string[]]$Args)
     & $script:otbLauncher @Args
     if ($LASTEXITCODE -ne 0) {
-        throw "OTB failed (${LASTEXITCODE}): $($Args -join ' ')"
+        throw "OTB failed on run"
     }
 }
 
@@ -129,7 +150,7 @@ function buildpair {
                 $postCloudUse = $postCloudDil
             }
 
-            # Invalidate both dates anywhere clouds are detected in either image.
+            #double cloud both dates, unable to discern underneath
             runotb -Args @("BandMath", "-il", $preUse, $preCloudUse, $postCloudUse, "-exp", "(im2b1==1 or im3b1==1)?255:im1b1", "-out", $preCloudFiltered, "uint8")
             runotb -Args @("BandMath", "-il", $postUse, $preCloudUse, $postCloudUse, "-exp", "(im2b1==1 or im3b1==1)?255:im1b1", "-out", $postCloudFiltered, "uint8")
 
@@ -153,17 +174,6 @@ function buildpair {
     runotb -Args @("BandMath", "-il", $preUse, $postUse, "-exp", "(im1b1!=255 and im2b1!=255 and im1b1==im2b1)?1:0", "-out", $noChange, "uint8")
     runotb -Args @("BandMath", "-il", $preUse, $postUse, "-exp", "(im1b1==255 or im2b1==255)?255:((im1b1==0 and im2b1==1)?1:((im1b1==1 and im2b1==0)?2:0))", "-out", $changeClass, "uint8")
 
-    return [PSCustomObject]@{
-        Mask = $Mask
-        PreDate = $Pre
-        PostDate = $Post
-        PreMask = $preUse
-        PostMask = $postUse
-        Erosion = $erosion
-        Accretion = $accretion
-        NoChange = $noChange
-        ChangeClass = $changeClass
-    }
 }
 function cleanup {
     param(
@@ -250,6 +260,9 @@ $sceneDirs = @(
         } |
         Sort-Object Name
 )
+if ($sceneDirs.Count -lt 2) {
+    throw "need at least 2 dated classification folders in $ClassifiedRoot"
+}
 
 $anchorDate = $sceneDirs[0].Name
 $maskList = @(masklist -Root $ClassifiedRoot -Date $anchorDate -DefaultMasks $MaskNames)
@@ -261,23 +274,20 @@ if (-not $AllMasks) {
     $maskList = @("water_mask")
 }
 
-$records = New-Object System.Collections.Generic.List[object]
-
 for ($i = 0; $i -lt ($sceneDirs.Count - 1); $i++) {
     $pre = $sceneDirs[$i].Name
     $post = $sceneDirs[$i + 1].Name
     foreach ($mask in $maskList) {
         $pairDir = Join-Path (Join-Path $OutputRoot $mask) ("{0}_to_{1}" -f $pre, $post)
         Write-Output ("building change for {0}: {1} -> {2}" -f $mask, $pre, $post)
-        $rec = buildpair -Mask $mask -Pre $pre -Post $post -OutDir $pairDir
-        $records.Add($rec)
+        buildpair -Mask $mask -Pre $pre -Post $post -OutDir $pairDir
     }
 }
 
 if ($ApplyMorphologyCleanup) {
     $dateNames = @($sceneDirs | Select-Object -ExpandProperty Name)
     foreach ($mask in $maskList) {
-        Write-Output ("applying morphlogy cleanup for {0} (radius={1})" -f $mask, $MorphologyRadius)
+        Write-Output ("applying morphology cleanup" -f $mask, $MorphologyRadius)
         cleanup -Mask $mask -Dates $dateNames
     }
 }
@@ -292,7 +302,4 @@ foreach ($mask in $maskList) {
     }
 }
 
-$catalogPath = Join-Path $OutputRoot "change_catalog.csv"
-$records | Export-Csv -Path $catalogPath -NoTypeInformation -Encoding UTF8
-
-Write-Output "Change framework complete: $OutputRoot"
+Write-Output "change fraework complete $OutputRoot"
