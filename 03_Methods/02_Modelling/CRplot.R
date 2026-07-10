@@ -19,7 +19,7 @@ if (is.null(scriptpath) || !nzchar(scriptpath)) {
 } else {
   reporoot <- normalizePath(file.path(dirname(scriptpath), "..", ".."), winslash = "/", mustWork = FALSE)
 }
-
+#these are my file paths just change to whatever fits
 inputcsv <- getargvalue("--input", file.path(reporoot, "04_Analysis", "channel_rainfall_summary.csv"))
 outdir <- getargvalue("--outdir", file.path(reporoot, "05_Figures", "channel_rainfall"))
 
@@ -47,8 +47,7 @@ themeplot <- function() {
   )
 }
 
-# 1) Change components over time
-png(file.path(outdir, "channel_change_components_overtime.png"), width = 1600, height = 900, res = 160)
+png(file.path(outdir, "channelchange_overtime.png"), width = 1600, height = 900, res = 160)
 themeplot()
 matplot(
   x = df$post_date,
@@ -73,8 +72,7 @@ legend(
 )
 dev.off()
 
-# 2) Net and cumulative net change over time
-png(file.path(outdir, "channel_net_change_overtime.png"), width = 1600, height = 900, res = 160)
+png(file.path(outdir, "netchannel_overtime.png"), width = 1600, height = 900, res = 160)
 themeplot()
 netplotrange <- range(c(df$net_change_area_ha, df$cumulative_net_change_ha, 0), na.rm = TRUE)
 plot(
@@ -102,9 +100,8 @@ legend(
 )
 dev.off()
 
-# 3) Context rainfall through time, if available
 if (hascontextcols) {
-  png(file.path(outdir, "context_rainfall_through_time.png"), width = 1600, height = 900, res = 160)
+  png(file.path(outdir, "rainfall_overtime.png"), width = 1600, height = 900, res = 160)
   themeplot()
   contextlabel <- unique(na.omit(df$context_mode))
   if (length(contextlabel) == 0) {
@@ -137,8 +134,7 @@ if (hascontextcols) {
   dev.off()
 }
 
-# 4) Rainfall and change stacked panels
-png(file.path(outdir, "rainfall_and_channel_change_panels.png"), width = 1600, height = 1200, res = 160)
+png(file.path(outdir, "RainfallChannel_overtime.png"), width = 1600, height = 1200, res = 160)
 par(mfrow = c(2, 1), mar = c(4, 5, 3, 2), oma = c(0, 0, 1, 0))
 themeplot()
 plot(
@@ -166,8 +162,7 @@ plot(
 mtext("Rainfall and Channel Change Over Time", outer = TRUE, cex = 1.2, col = "#102030")
 dev.off()
 
-# 5) Rainfall vs change scatter
-png(file.path(outdir, "rainfall_vs_change_scatter.png"), width = 1400, height = 900, res = 160)
+png(file.path(outdir, "changerainfall_scatter.png"), width = 1400, height = 900, res = 160)
 themeplot()
 plot(
   df$rain_mm_interval,
