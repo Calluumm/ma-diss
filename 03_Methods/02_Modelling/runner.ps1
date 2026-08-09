@@ -1,67 +1,26 @@
-param(
-    [string]$InputRoot = "c:/input",
-    [bool]$ApplySinglePixelCleanup = $true,
-    [int]$CleanupRadius = 2,
-    [bool]$ApplyWaterEdgeRecovery = $true,
-    [int]$WaterEdgeRadius = 1,
-    [double]$WaterEdgeNdviMax = 0.30,
-    [double]$WaterEdgeMndwiMin = -0.15,
-    [double]$WaterEdgeNdwiMin = -0.03,
-    [double]$BareNdwiMax = -0.02,
-    [string]$ClassifiedRoot = "c:/classified file input",
-    [string]$ChangeRoot = "c:/overall output for change framework",
-    [bool]$AllMasks = $true,
-    [bool]$ApplyMorphologyCleanup = $true,
-    [int]$MorphologyRadius = 1,
-    [int]$CloudBufferRadius = 2
-)
-#see latter keep these
+#& "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe" -ExecutionPolicy Bypass -File "03_Methods/02_Modelling/dualrun.ps1"
+#So i can go to lunch and not worry about starting the next part of the pipeline :D wonderful
+#this literally just runs the 3 powershell scripts in series
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+$scriptdir = Split-Path -Parent $MyInvocation.MyCommand.Path
 
-$scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
-$classifyScript = Join-Path $scriptDir "classifyRGeoms.ps1"
-$changeScript = Join-Path $scriptDir "change_frmk.ps1"
-
-if (-not (Test-Path $ClassifiedRoot)) {
-    New-Item -ItemType Directory -Path $ClassifiedRoot -Force | Out-Null
-}
-
-if (-not (Test-Path $ChangeRoot)) {
-    New-Item -ItemType Directory -Path $ChangeRoot -Force | Out-Null
-}
-
-Write-Host "[1/2] running classify"
-$classifyParams = @{
-    InputRoot = $InputRoot
-    OutputRoot = $ClassifiedRoot
-    CleanupRadius = $CleanupRadius
-    WaterEdgeRadius = $WaterEdgeRadius
-    WaterEdgeNdviMax = $WaterEdgeNdviMax
-    WaterEdgeMndwiMin = $WaterEdgeMndwiMin
-    WaterEdgeNdwiMin = $WaterEdgeNdwiMin
-    BareNdwiMax = $BareNdwiMax
-}
-if ($ApplySinglePixelCleanup) { $classifyParams.ApplySinglePixelCleanup = $true }
-if ($ApplyWaterEdgeRecovery) { $classifyParams.ApplyWaterEdgeRecovery = $true }
-
-& $classifyScript @classifyParams
+Write-Host "running classify"
+& (Join-Path $scriptdir "classify.ps1")
 if ($LASTEXITCODE -ne 0) {
-    throw "classify failed error $LASTEXITCODE"
+    throw "classify.ps1 failed with exit code $LASTEXITCODE"
 }
-Write-Host "[2/2] running change framework."
-$changeParams = @{
-    MorphologyRadius = $MorphologyRadius
-    CloudBufferRadius = $CloudBufferRadius
-    ClassifiedRoot = $ClassifiedRoot
-    OutputRoot = $ChangeRoot
-}
-if ($AllMasks) { $changeParams.AllMasks = $true }
-if ($ApplyMorphologyCleanup) { $changeParams.ApplyMorphologyCleanup = $true }
 
-& $changeScript @changeParams
+Write-Host "running change"
+& (Join-Path $scriptdir "change.ps1")
 if ($LASTEXITCODE -ne 0) {
-    throw "change framework error $LASTEXITCODE"
+    throw "change.ps1 failed with exit code $LASTEXITCODE"
 }
 
-Write-Host "both succeded"
+Write-Host "running confusion"
+& (Join-Path $scriptdir "confusion.ps1")
+if ($LASTEXITCODE -ne 0) {
+    throw "confusion.ps1 failed with exit code $LASTEXITCODE"
+}
+
+Write-Host "finished pipeline"
