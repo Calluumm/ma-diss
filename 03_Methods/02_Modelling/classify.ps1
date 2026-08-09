@@ -1,300 +1,776 @@
-param(
-    [string]$InputRoot = "c:/input",
-    [string]$OutputRoot = "c:/output",
-    [double]$WaterMndwi = 0.05,
-    [double]$WaterNdwi = 0.02,
-    [double]$WaterNdviMax = 0.20,
-    [double]$WaterBsiMax = 0.05,
-    [double]$WaterVisMeanMax = 0.22,
-    [double]$WaterProtectNdviMax = 0.32,
-    [double]$WaterProtectMndwiMin = -0.08,
-    [double]$WaterProtectNdwiMin = -0.03,
-    [double]$VegetationNdvi = 0.30,
-    [double]$BareBsi = 0.05,
-    [double]$BareMndwiMax = 0.00,
-    [double]$BareNdwiMax = -0.02,
-    [double]$CloudVisMeanMin = 0.23,
-    [double]$CloudCoreVisMeanMin = 0.30,
-    [double]$CloudNdviMax = 0.20,
-    [double]$CloudMndwiMax = 0.05,
-    [double]$CloudSwirMin = 0.20,
-    [double]$CloudCirrusMin = 0.15,
-    [double]$CloudBsiMax = 0.25,
-    [double]$ReflectanceScale = 10000.0,
-    [bool]$ApplyStreamPrior = $true,
-    [string]$StreamPriorVector = "c:/stream outline shapefile",
-    [int]$StreamPriorRadius = 2,
-    [double]$StreamPriorNdviMax = 0.28,
-    [double]$StreamPriorMndwiMin = -0.12,
-    [double]$StreamPriorNdwiMin = -0.03,
-    [double]$StreamPriorBsiMax = 0.10,
-    [double]$StreamPriorVisMeanMax = 0.22,
-    [int]$StreamPriorCloudExclusionRadius = 1,
-    [double]$SedimentPriorNdviMax = 0.22,
-    [double]$SedimentPriorMndwiMax = 0.04,
-    [double]$SedimentPriorBsiMin = 0.02,
-    [double]$SedimentPriorBsiMax = 0.22,
-    [double]$SedimentPriorVisMeanMax = 0.32,
-    [bool]$ApplyChannelContinuityRecovery = $true,
-    [int]$ChannelContinuityRadius = 1,
-    [bool]$ApplyWaterEdgeRecovery = $true,
-    [int]$WaterEdgeRadius = 1,
-    [double]$WaterEdgeNdviMax = 0.30,
-    [double]$WaterEdgeMndwiMin = -0.15,
-    [double]$WaterEdgeNdwiMin = -0.03,
-    [bool]$ApplySinglePixelCleanup = $true,
-    [int]$CleanupRadius = 1
-)
-
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-function gettool {
-    param([string]$Name)
 
-    $cmd = Get-Command $Name -ErrorAction SilentlyContinue
-    if ($null -ne $cmd) {
-        return $cmd.Source
-    }
+#in and outs
+$inputroot = "c:/Users/Student/Desktop/Masters/Dissertation/02_Data/01_Raw/Scenes/Sentinel2/longtimeseries"
+$outputroot = "c:/Users/Student/Desktop/Masters/Dissertation/02_Data/02_Processed/Sentinel2_Geomorphology_OTB"
 
-    # Fallback for common local OTB installs when PATH is not configured.
-    if ($Name -eq "otbApplicationLauncherCommandLine") {
-        $fallbacks = @(
-            "C:/Users/Student/Desktop/OTB/OTB-9.1.1-Win64/bin/otbApplicationLauncherCommandLine.exe"
-        )
+#okay so the actual thresholds/band edits are set here some of them do veyr little my iterative process dragged so there are wayyyy too many
+$watermndwi = 0.06
+$waterndwi = 0.03
+$waterndvimx = 0.20
+$waterbsimx = 0.04
+$watervismeanmx = 0.22
+$waterprotectndvimx = 0.32
+$waterprotectmndwimn = -0.08
+$waterprotectndwimn = -0.03
+$vegetationndvi = 0.30
+$barebsi = 0.05
+$baremndwimx = 0.00
+$barendwimx = -0.02
+$cloudvismeanmn = 0.23
+$cloudcorevismeanmn = 0.30
+$cloudndvimx = 0.20
+$cloudmndwimx = 0.05
+$cloudswirmn = 0.20
+$cloudcirrusmn = 0.15
+$cloudbsimx = 0.25
+$useadaptivebrightness = $true #nov 2025 check scene brightness
+$adaptivescenevisreference = 0.18
+$adaptivewatervissensitivity = 0.60
+$adaptivewatervismeanfloor = 0.16
+$adaptivewatervismeancap = 0.35
+$adaptivecloudstdfactor = 1.00
+$adaptivecloudoffset = 0.03
+$adaptivecloudcoreoffset = 0.08
+$reflectancescale = 10000.0
+#important soft stream guide
+$applystreamp = $true
+$streampvector = "c:/Users/Student/Desktop/Masters/Dissertation/02_Data/01_Raw/manual stream/manual4326.shp"
+$streampr = 2
+$streampndvimx = 0.28
+$streampmndwimn = -0.12
+$streampndwimn = -0.03
+$streampbsimx = 0.10
+$streampvismeanmx = 0.22
+$streampcloudexclusionr = 1
+$sedimentpriorndvimx = 0.22
+$sedimentpriormndwimx = 0.04
+$sedimentpriorbsimn = 0.02
+$sedimentpriorbsimx = 0.22
+$sedimentpriorvismeanmx = 0.32
+#end of important soft stream guide
+$inchannelsedimentndvimx = 0.35
+$inchannelsedimentmndwimx = 0.14
+$inchannelsedimentbsimn = -0.02
+$inchannelsedimentbsimx = 0.36
+$inchannelsedimentvismeanmx = 0.55
+$inchannelsedimentadjndvimx = 0.45
+$inchannelsedimentadjmndwimx = 0.30
+$inchannelsedimentadjbsimx = 0.55
+$inchannelsedimentadjvismeanmx = 0.65
+$applychannelsedimentsplit = $true
+$channelsedimentpriorr = 6
+$channelsedimentwateradjacencyr = 4
+$allowsedimentsplitwithoutwateradjacency = $true
+$inchannelsedimentnoadjndvimx = 0.32
+$inchannelsedimentnoadjmndwimx = 0.18
+$inchannelsedimentnoadjbsimn = -0.05
+$inchannelsedimentnoadjbsimx = 0.36
+$inchannelsedimentnoadjvismeanmx = 0.60
+$applywaterspksedimentcleanup = $false #revisit maybe worth 
+$waterspkopeningr = 1
+$waterspkchannelpriorr = 2
+$waterspksedimentndvimx = 0.30
+$waterspksedimentmndwimx = 0.08
+$waterspksedimentbsimn = 0.00
+$waterspksedimentvismeanmx = 0.36
+$applychannelcntyrcvy = $true
+$channelcntyr = 1
+$applywateredgercvy = $true
+$wateredger = 1
+$wateredgendvimx = 0.24
+$wateredgemndwimn = -0.08
+$wateredgendwimn = 0.00
+$applysinglepixelcleanup = $true
+$cleanupr = 1
+$applyunclassifiedrcvy = $true
+$unclassifiedwateradjacencyr = 1
+$unclassifiedchannelpriorr = 2
+$unclassifiedsedimentndvimx = 0.30
+$unclassifiedsedimentmndwimx = 0.10
+$unclassifiedsedimentbsimn = -0.02
+$unclassifiedsedimentvismeanmx = 0.38
+$unclassifiedbarendvimx = 0.35
+$unclassifiedbarebsimn = 0.01
+$applyfinalclass0fallback = $true
+$finalfallbackchannelpriorr = 3
+$applybankclass0rcvy = $true
+$bankrcvywaterr = 3
+$bankrcvychannelr = 3
+$bankrcvyndvimx = 0.42
+$bankrcvymndwimx = 0.20
+$bankrcvybsimn = -0.08
+$bankrcvyvismeanmx = 0.45
+$applywatercntyrcvy = $true
+$watercntyr = 3
+$watercntyndvimx = 0.28
+$watercntymndwimn = -0.02
+$watercntyndwimn = -0.01
+$watercntyrecoverbare = $true
+$watercntypriorr = 4
+$watercntybarendvimx = 0.30
+$watercntybaremndwimn = -0.10
+$watercntybarendwimn = -0.04
+$watercntybarebsimx = 0.16
+$watercntybarevismeanmx = 0.40
+$watercntyrecoverclass0 = $true
+$watercntyclass0ndvimx = 0.34
+$watercntyclass0mndwimn = -0.14
+$watercntyclass0ndwimn = -0.08
+$watercntyclass0bsimx = 0.16
+$watercntyclass0vismeanmx = 0.42
+$applywaterchannelclosing = $true
+$waterchannelclosingr = 2
+$waterchannelclosingpriorr = 4
+$applydrychannelbridgercvy = $false
+$drychannelbridgewatercloser = 4
+$drychannelbridgepriorr = 3
+$drychannelbridgendvimx = 0.30
+$drychannelbridgemndwimn = -0.12
+$drychannelbridgendwimn = -0.06
+$drychannelbridgebsimx = 0.18
+$drychannelbridgevismeanmx = 0.40
+$drychannelbridgeincludeclass0 = $true
+$drychannelbridgeconvertsediment = $false
+$applycatchmentmask = $false
 
-        foreach ($candidate in $fallbacks) {
-            if (Test-Path $candidate) {
-                return $candidate
-            }
-        }
-    }
-
-    if ($null -eq $cmd) {
-        throw "missing $Name"
-    }
-    return $cmd.Source
-}
-
-function runotb {
+#calls otb throughout
+function runOtb {
     param([Parameter(Mandatory = $true)][string[]]$Args)
-    & $script:otbLauncher @Args
+    & $script:otblauncher @Args
     if ($LASTEXITCODE -ne 0) {
-        throw "OTB failed omn run"
+        throw "OTB failed (${LASTEXITCODE}): $($Args -join ' ')"
     }
 }
 
-function dilatebin {
+function dilateBin {
     param(
-        [Parameter(Mandatory = $true)][string]$InputBinary,
-        [Parameter(Mandatory = $true)][string]$OutputBinary,
-        [Parameter(Mandatory = $true)][int]$Radius
+        [Parameter(Mandatory = $true)][string]$inputbinary,
+        [Parameter(Mandatory = $true)][string]$outputbinary,
+        [Parameter(Mandatory = $true)][int]$r
     )
-
-    runotb -Args @(
+    runOtb -Args @(
         "BinaryMorphologicalOperation",
-        "-in", $InputBinary,
+        "-in", $inputbinary,
         "-channel", "1",
         "-structype", "box",
-        "-xradius", $Radius,
-        "-yradius", $Radius,
+        "-xradius", $r,
+        "-yradius", $r,
         "-foreval", "1",
         "-backval", "0",
         "-filter", "dilate",
-        "-out", $OutputBinary, "uint8"
+        "-out", $outputbinary, "uint8" #keep for proper binary output, or messes up later bandmath
     )
 }
-
-if (-not (Test-Path $InputRoot)) {
-    throw "no input $InputRoot"
+#this plagued me forever, bless up regex
+function parseDoublesFromLine {
+    param([string]$line)
+    $matches = [regex]::Matches($line, '-?\d+(?:\.\d+)?')
+    $values = @()
+    foreach ($m in $matches) {
+        $values += [double]$m.Value
+    }
+    return $values
 }
 
-$script:otbLauncher = gettool "otbApplicationLauncherCommandLine"
+#needed for brithness adjustment
+function getSceneBandStats {
+    param([Parameter(Mandatory = $true)][string]$imagepath)
+    $output = & $script:otblauncher "ComputeImagesStatistics" "-il" $imagepath 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "failed on $imagepath"
+        return $null
+    }
+    $meanline = $null
+    $stdline = $null
+    foreach ($line in $output) {
+        if ($line -match 'out\.mean:') {
+            $meanline = $line.ToString()
+        }
+        elseif ($line -match 'out\.std:') {
+            $stdline = $line.ToString()
+        }
+    }
 
-$launcherDir = Split-Path $script:otbLauncher -Parent
-$otbRoot = Split-Path $launcherDir -Parent
-$defaultAppsPath = Join-Path $otbRoot "lib/otb/applications"
-if ([string]::IsNullOrWhiteSpace($env:OTB_APPLICATION_PATH) -and (Test-Path $defaultAppsPath)) {
-    $env:OTB_APPLICATION_PATH = $defaultAppsPath
+    if ([string]::IsNullOrWhiteSpace($meanline) -or [string]::IsNullOrWhiteSpace($stdline)) {
+        Write-Warning "failed on $imagepath; mean or sd lost somewhere"
+        return $null
+    }
+
+    $means = parseDoublesFromLine -Line $meanline
+    $stds = parseDoublesFromLine -Line $stdline
+    if ($means.Count -lt 3 -or $stds.Count -lt 3) {
+        Write-Warning "missing vis bands on $imagepath"
+        return $null
+    }
+
+    return @{
+        Means = $means
+        Stds = $stds
+    }
 }
 
-New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+$script:otblauncher = "C:/Users/Student/Desktop/OTB/OTB-9.1.1-Win64/bin/otbApplicationLauncherCommandLine.exe"
+$env:otbapplicationpath = "C:/Users/Student/Desktop/OTB/OTB-9.1.1-Win64/lib/otb/applications"
+New-Item -ItemType Directory -Path $outputroot -Force | Out-Null
 
+#cleans qa masks out of scene list they just werent working
 $scenes = @(
-    Get-ChildItem -Path $InputRoot -Recurse -Filter *.tif |
+    Get-ChildItem -Path $inputroot -Recurse -Filter *.tif |
         Where-Object {
             $_.DirectoryName -notmatch '(?i)[\\/]qa_masks([\\/]|$)' -and
             $_.BaseName -notmatch '(?i)_qa_mask$'
         } |
         Sort-Object FullName
 )
-if ($scenes.Count -eq 0) {
-    Write-Output "no files found in this dir: $InputRoot"
-    exit 0
-}
+$usestreamp = $applystreamp
 
-$useStreamPrior = $ApplyStreamPrior -and (Test-Path $StreamPriorVector)
-if ($ApplyStreamPrior -and (-not $useStreamPrior)) {
-    Write-Warning "stream not found: $StreamPriorVector"
-}
-
+#classification start
+#above parameters and functions basically get applied to each band for each scene then spat out at the end
 foreach ($scene in $scenes) {
-    $dateLabel = $scene.BaseName
-    $sceneOut = Join-Path $OutputRoot $dateLabel
-    New-Item -ItemType Directory -Path $sceneOut -Force | Out-Null
+    $datelabel = $scene.BaseName
+    $sceneout = Join-Path $outputroot $datelabel
+    New-Item -ItemType Directory -Path $sceneout -Force | Out-Null
 
-    $ndvi = Join-Path $sceneOut "${dateLabel}_ndvi.tif"
-    $ndwi = Join-Path $sceneOut "${dateLabel}_ndwi.tif"
-    $mndwi = Join-Path $sceneOut "${dateLabel}_mndwi.tif"
-    $bsi = Join-Path $sceneOut "${dateLabel}_bsi.tif"
+    $ndvi = Join-Path $sceneout "${datelabel}_ndvi.tif"
+    $ndwi = Join-Path $sceneout "${datelabel}_ndwi.tif"
+    $mndwi = Join-Path $sceneout "${datelabel}_mndwi.tif"
+    $bsi = Join-Path $sceneout "${datelabel}_bsi.tif"
 
-    $water = Join-Path $sceneOut "${dateLabel}_water_mask.tif"
-    $waterCandidate = Join-Path $sceneOut "${dateLabel}_water_candidate_mask.tif"
-    $waterProtect = Join-Path $sceneOut "${dateLabel}_water_protect_mask.tif"
-    $vegetation = Join-Path $sceneOut "${dateLabel}_vegetation_mask.tif"
-    $bare = Join-Path $sceneOut "${dateLabel}_bare_sediment_mask.tif"
-    $cloud = Join-Path $sceneOut "${dateLabel}_cloud_mask.tif"
-    $cloudRaw = Join-Path $sceneOut "${dateLabel}_cloud_mask_raw.tif"
-    $cloudCore = Join-Path $sceneOut "${dateLabel}_cloud_mask_core.tif"
-    $active = Join-Path $sceneOut "${dateLabel}_active_channel_mask.tif"
-    $classmap = Join-Path $sceneOut "${dateLabel}_class_map.tif"
+    $water = Join-Path $sceneout "${datelabel}_water_mask.tif"
+    $watercandidate = Join-Path $sceneout "${datelabel}_water_candidate_mask.tif"
+    $waterprotect = Join-Path $sceneout "${datelabel}_water_protect_mask.tif"
+    $vegetation = Join-Path $sceneout "${datelabel}_vegetation_mask.tif"
+    $bare = Join-Path $sceneout "${datelabel}_bare_sediment_mask.tif"
+    $channelsediment = Join-Path $sceneout "${datelabel}_channel_sediment_mask.tif"
+    $cloud = Join-Path $sceneout "${datelabel}_cloud_mask.tif"
+    $cloudraw = Join-Path $sceneout "${datelabel}_cloud_mask_raw.tif"
+    $cloudcore = Join-Path $sceneout "${datelabel}_cloud_mask_core.tif"
+    $active = Join-Path $sceneout "${datelabel}_active_channel_mask.tif"
+    $classmap = Join-Path $sceneout "${datelabel}_class_map.tif"
 
-    runotb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b7-im1b3)/(im1b7+im1b3+0.0001)", "-out", $ndvi, "float")
-    runotb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b2-im1b7)/(im1b2+im1b7+0.0001)", "-out", $ndwi, "float")
-    runotb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b2-im1b8)/(im1b2+im1b8+0.0001)", "-out", $mndwi, "float")
-    runotb -Args @("BandMath", "-il", $scene.FullName, "-exp", "((im1b8+im1b3)-(im1b7+im1b1))/((im1b8+im1b3)+(im1b7+im1b1)+0.0001)", "-out", $bsi, "float")
+    $scenewatervismeanmx = $watervismeanmx
+    $scenecloudvismeanmn = $cloudvismeanmn
+    $scenecloudcorevismeanmn = $cloudcorevismeanmn
+    $scenestreampvismeanmx = $streampvismeanmx
+    $scenesedimentpriorvismeanmx = $sedimentpriorvismeanmx
+    #idk if theres a better way to set this up reminder to self to edit brightness thresholds nov 2025 as brightest check
+    if ($useadaptivebrightness) {
+        $stats = getSceneBandStats -ImagePath $scene.FullName
+        if ($null -ne $stats) {
+            $scenevismean = (($stats.Means[0] + $stats.Means[1] + $stats.Means[2]) / 3.0) / $reflectancescale
+            $scenevisstd = (($stats.Stds[0] + $stats.Stds[1] + $stats.Stds[2]) / 3.0) / $reflectancescale
 
-    runotb -Args @("BandMath", "-il", $scene.FullName, $ndvi, $mndwi, $ndwi, $bsi, "-exp", "(((im3b1>$WaterMndwi or im4b1>$WaterNdwi) and im2b1<$WaterNdviMax and im5b1<$WaterBsiMax and (((im1b1+im1b2+im1b3)/3.0)/$ReflectanceScale)<$WaterVisMeanMax)?1:0)", "-out", $waterCandidate, "uint8")
-    runotb -Args @("BandMath", "-il", $ndvi, $mndwi, $ndwi, "-exp", "((im1b1<$WaterProtectNdviMax and (im2b1>$WaterProtectMndwiMin or im3b1>$WaterProtectNdwiMin))?1:0)", "-out", $waterProtect, "uint8")
-    runotb -Args @("BandMath", "-il", $scene.FullName, $ndvi, $mndwi, $bsi, "-exp", "(((((im1b1+im1b2+im1b3)/3.0)/$ReflectanceScale)>$CloudVisMeanMin) and ((im1b8/$ReflectanceScale)>$CloudSwirMin and (im1b9/$ReflectanceScale)>$CloudCirrusMin) and im2b1<$CloudNdviMax and im3b1<$CloudMndwiMax and im4b1<$CloudBsiMax)?1:0", "-out", $cloudRaw, "uint8")
-    runotb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(((((im1b1+im1b2+im1b3)/3.0)/$ReflectanceScale)>$CloudCoreVisMeanMin) and ((im1b8/$ReflectanceScale)>$CloudSwirMin and (im1b9/$ReflectanceScale)>$CloudCirrusMin))?1:0", "-out", $cloudCore, "uint8")
-    runotb -Args @("BandMath", "-il", $cloudCore, $cloudRaw, $waterProtect, "-exp", "(im1b1==1)?1:((im2b1==1 and im3b1==0)?1:0)", "-out", $cloud, "uint8")
-    runotb -Args @("BandMath", "-il", $waterCandidate, $cloud, "-exp", "(im2b1==1)?255:im1b1", "-out", $water, "uint8")
-    runotb -Args @("BandMath", "-il", $ndvi, $cloud, "-exp", "(im2b1==1)?255:((im1b1>$VegetationNdvi)?1:0)", "-out", $vegetation, "uint8")
-    runotb -Args @("BandMath", "-il", $ndvi, $mndwi, $bsi, $ndwi, $cloud, "-exp", "(im5b1==1)?255:((im3b1>$BareBsi and im2b1<$BareMndwiMax and im4b1<$BareNdwiMax)?1:0)", "-out", $bare, "uint8")
+            $scenewatervismeanmx = [Math]::Min($adaptivewatervismeancap, [Math]::Max($adaptivewatervismeanfloor, $watervismeanmx + (($scenevismean - $adaptivescenevisreference) * $adaptivewatervissensitivity)))
+            $scenecloudvismeanmn = [Math]::Max($cloudvismeanmn, $scenevismean + ($adaptivecloudstdfactor * $scenevisstd) + $adaptivecloudoffset)
+            $scenecloudcorevismeanmn = [Math]::Max($cloudcorevismeanmn, $scenevismean + (($adaptivecloudstdfactor + 0.4) * $scenevisstd) + $adaptivecloudcoreoffset)
+            $scenestreampvismeanmx = [Math]::Min($adaptivewatervismeancap, [Math]::Max($scenewatervismeanmx, $streampvismeanmx + (($scenevismean - $adaptivescenevisreference) * 0.35)))
+            $scenesedimentpriorvismeanmx = [Math]::Min(0.40, [Math]::Max(0.24, $sedimentpriorvismeanmx + (($scenevismean - $adaptivescenevisreference) * 0.45)))
+        }
+    }
 
-    Remove-Item -Path $waterCandidate, $waterProtect, $cloudRaw, $cloudCore -Force -ErrorAction SilentlyContinue
+    #indices and masks band math
+    runOtb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b7-im1b3)/(im1b7+im1b3+0.0001)", "-out", $ndvi, "float")
+    runOtb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b2-im1b7)/(im1b2+im1b7+0.0001)", "-out", $ndwi, "float")
+    runOtb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b2-im1b8)/(im1b2+im1b8+0.0001)", "-out", $mndwi, "float")
+    runOtb -Args @("BandMath", "-il", $scene.FullName, "-exp", "((im1b8+im1b3)-(im1b7+im1b1))/((im1b8+im1b3)+(im1b7+im1b1)+0.0001)", "-out", $bsi, "float")
+    runOtb -Args @("BandMath", "-il", $scene.FullName, $ndvi, $mndwi, $ndwi, $bsi, "-exp", "(((im3b1>$watermndwi or im4b1>$waterndwi) and im2b1<$waterndvimx and im5b1<$waterbsimx and (((im1b1+im1b2+im1b3)/3.0)/$reflectancescale)<$scenewatervismeanmx)?1:0)", "-out", $watercandidate, "uint8")
+    runOtb -Args @("BandMath", "-il", $ndvi, $mndwi, $ndwi, "-exp", "((im1b1<$waterprotectndvimx and (im2b1>$waterprotectmndwimn or im3b1>$waterprotectndwimn))?1:0)", "-out", $waterprotect, "uint8")
+    runOtb -Args @("BandMath", "-il", $scene.FullName, $ndvi, $mndwi, $bsi, "-exp", "(((((im1b1+im1b2+im1b3)/3.0)/$reflectancescale)>$scenecloudvismeanmn) and ((im1b8/$reflectancescale)>$cloudswirmn and (im1b9/$reflectancescale)>$cloudcirrusmn) and im2b1<$cloudndvimx and im3b1<$cloudmndwimx and im4b1<$cloudbsimx)?1:0", "-out", $cloudraw, "uint8")
+    runOtb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(((((im1b1+im1b2+im1b3)/3.0)/$reflectancescale)>$scenecloudcorevismeanmn) and ((im1b8/$reflectancescale)>$cloudswirmn and (im1b9/$reflectancescale)>$cloudcirrusmn))?1:0", "-out", $cloudcore, "uint8")
+    runOtb -Args @("BandMath", "-il", $cloudcore, $cloudraw, $waterprotect, "-exp", "(im1b1==1)?1:((im2b1==1 and im3b1==0)?1:0)", "-out", $cloud, "uint8")
+    runOtb -Args @("BandMath", "-il", $watercandidate, $cloud, "-exp", "(im2b1==1)?255:im1b1", "-out", $water, "uint8")
+    runOtb -Args @("BandMath", "-il", $ndvi, $cloud, "-exp", "(im2b1==1)?255:((im1b1>$vegetationndvi)?1:0)", "-out", $vegetation, "uint8")
+    runOtb -Args @("BandMath", "-il", $ndvi, $mndwi, $bsi, $ndwi, $cloud, "-exp", "(im5b1==1)?255:((im3b1>$barebsi and im2b1<$baremndwimx and im4b1<$barendwimx)?1:0)", "-out", $bare, "uint8")
+    #if I had more storage lol
+    Remove-Item -Path $watercandidate, $waterprotect, $cloudraw, $cloudcore -Force -ErrorAction SilentlyContinue
 
-    runotb -Args @(
+    runOtb -Args @(
         "BandMath",
         "-il", $water, $vegetation, $bare, $cloud,
         "-exp", "(im4b1==1)?4:((im1b1==255 or im2b1==255 or im3b1==255)?255:((im1b1==1)?1:((im2b1==1)?2:((im3b1==1)?3:0))))",
         "-out", $classmap, "uint8"
     )
 
-    if ($ApplyWaterEdgeRecovery) {
-        $edgeRadius = [Math]::Max(1, $WaterEdgeRadius)
-        $waterSeed = Join-Path $sceneOut ("{0}_water_seed_bin.tif" -f $dateLabel)
-        $waterSeedDil = Join-Path $sceneOut ("{0}_water_seed_dil.tif" -f $dateLabel)
-        $classRecovered = Join-Path $sceneOut ("{0}_class_map_recovered.tif" -f $dateLabel)
+    if ($applywateredgercvy) {
+        $edger = [Math]::Max(1, $wateredger)
+        $waterseed = Join-Path $sceneout ("{0}_water_seed_bin.tif" -f $datelabel)
+        $waterseeddil = Join-Path $sceneout ("{0}_water_seed_dil.tif" -f $datelabel)
+        $classrecovered = Join-Path $sceneout ("{0}_class_map_recovered.tif" -f $datelabel)
 
-        runotb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $waterSeed, "uint8")
-        dilatebin -InputBinary $waterSeed -OutputBinary $waterSeedDil -Radius $edgeRadius
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $waterseed, "uint8")
+        dilateBin -inputbinary $waterseed -outputbinary $waterseeddil -r $edger
 
-        runotb -Args @(
+        runOtb -Args @(
             "BandMath",
-            "-il", $classmap, $cloud, $ndvi, $mndwi, $ndwi, $waterSeedDil,
-                "-exp", "(im2b1==1 or im1b1==255)?im1b1:((im1b1==0 and im6b1==1 and im3b1<$WaterEdgeNdviMax and (im4b1>$WaterEdgeMndwiMin or im5b1>$WaterEdgeNdwiMin))?1:im1b1)",
-            "-out", $classRecovered, "uint8"
+            "-il", $classmap, $cloud, $ndvi, $mndwi, $ndwi, $waterseeddil,
+                "-exp", "(im2b1==1 or im1b1==255)?im1b1:((im1b1==0 and im6b1==1 and im3b1<$wateredgendvimx and (im4b1>$wateredgemndwimn or im5b1>$wateredgendwimn))?1:im1b1)",
+            "-out", $classrecovered, "uint8"
         )
 
-        Move-Item -Path $classRecovered -Destination $classmap -Force
-        Remove-Item -Path $waterSeed, $waterSeedDil, $classRecovered -Force -ErrorAction SilentlyContinue
+        Move-Item -Path $classrecovered -Destination $classmap -Force
+        Remove-Item -Path $waterseed, $waterseeddil, $classrecovered -Force -ErrorAction SilentlyContinue
     }
+    #reminder to self edit here top param block lines 38 53 think
+    if ($usestreamp) {
+        $streamr = [Math]::Max(1, $streampr)
+        $cloudexr = [Math]::Max(0, $streampcloudexclusionr)
+        $streampraw = Join-Path $sceneout ("{0}_stream_prior_raw.tif" -f $datelabel)
+        $streampdil = Join-Path $sceneout ("{0}_stream_prior_dil.tif" -f $datelabel)
+        $cloudpriorex = Join-Path $sceneout ("{0}_cloud_prior_exclusion.tif" -f $datelabel)
+        $classstream = Join-Path $sceneout ("{0}_class_map_stream_prior.tif" -f $datelabel)
+        $waternear = Join-Path $sceneout ("{0}_stream_water_near.tif" -f $datelabel)
+        $waterneardil = Join-Path $sceneout ("{0}_stream_water_near_dil.tif" -f $datelabel)
+        $barenear = Join-Path $sceneout ("{0}_stream_bare_near.tif" -f $datelabel)
+        $bareneardil = Join-Path $sceneout ("{0}_stream_bare_near_dil.tif" -f $datelabel)
+        $classcnty = Join-Path $sceneout ("{0}_class_map_continuity.tif" -f $datelabel)
 
-    if ($useStreamPrior) {
-        $streamRadius = [Math]::Max(1, $StreamPriorRadius)
-        $cloudExRadius = [Math]::Max(0, $StreamPriorCloudExclusionRadius)
-        $streamPriorRaw = Join-Path $sceneOut ("{0}_stream_prior_raw.tif" -f $dateLabel)
-        $streamPriorDil = Join-Path $sceneOut ("{0}_stream_prior_dil.tif" -f $dateLabel)
-        $cloudPriorEx = Join-Path $sceneOut ("{0}_cloud_prior_exclusion.tif" -f $dateLabel)
-        $classStream = Join-Path $sceneOut ("{0}_class_map_stream_prior.tif" -f $dateLabel)
-        $waterNear = Join-Path $sceneOut ("{0}_stream_water_near.tif" -f $dateLabel)
-        $waterNearDil = Join-Path $sceneOut ("{0}_stream_water_near_dil.tif" -f $dateLabel)
-        $bareNear = Join-Path $sceneOut ("{0}_stream_bare_near.tif" -f $dateLabel)
-        $bareNearDil = Join-Path $sceneOut ("{0}_stream_bare_near_dil.tif" -f $dateLabel)
-        $classContinuity = Join-Path $sceneOut ("{0}_class_map_continuity.tif" -f $dateLabel)
-
-        runotb -Args @(
+        runOtb -Args @(
             "Rasterization",
-            "-in", $StreamPriorVector,
+            "-in", $streampvector,
             "-im", $scene.FullName,
             "-background", "0",
             "-mode", "binary",
             "-mode.binary.foreground", "1",
-            "-out", $streamPriorRaw, "uint8"
+            "-out", $streampraw, "uint8"
         )
+        #dont use raw, raw fialed make sure to dilate
+        dilateBin -inputbinary $streampraw -outputbinary $streampdil -r $streamr
 
-        dilatebin -InputBinary $streamPriorRaw -OutputBinary $streamPriorDil -Radius $streamRadius
-
-        if ($cloudExRadius -gt 0) {
-            dilatebin -InputBinary $cloud -OutputBinary $cloudPriorEx -Radius $cloudExRadius
+        if ($cloudexr -gt 0) {
+            dilateBin -inputbinary $cloud -outputbinary $cloudpriorex -r $cloudexr
         }
         else {
-            runotb -Args @("BandMath", "-il", $cloud, "-exp", "im1b1", "-out", $cloudPriorEx, "uint8")
+            runOtb -Args @("BandMath", "-il", $cloud, "-exp", "im1b1", "-out", $cloudpriorex, "uint8")
         }
 
-        runotb -Args @(
+        runOtb -Args @(
             "BandMath",
-            "-il", $classmap, $streamPriorDil, $ndvi, $mndwi, $ndwi, $bsi, $cloudPriorEx, $scene.FullName,
-            "-exp", "(im1b1==255)?255:((im1b1==4)?4:((im1b1==0 and im2b1==1 and im7b1==0 and im3b1<$StreamPriorNdviMax and im6b1<$StreamPriorBsiMax and (((im8b1+im8b2+im8b3)/3.0)/$ReflectanceScale)<$StreamPriorVisMeanMax and (im4b1>$StreamPriorMndwiMin or im5b1>$StreamPriorNdwiMin))?1:((im1b1==0 and im2b1==1 and im7b1==0 and im3b1<$SedimentPriorNdviMax and im4b1<$SedimentPriorMndwiMax and im6b1>$SedimentPriorBsiMin and im6b1<$SedimentPriorBsiMax and (((im8b1+im8b2+im8b3)/3.0)/$ReflectanceScale)<$SedimentPriorVisMeanMax)?3:im1b1)))",
-            "-out", $classStream, "uint8"
+            "-il", $classmap, $streampdil, $ndvi, $mndwi, $ndwi, $bsi, $cloudpriorex, $scene.FullName,
+            "-exp", "(im1b1==255)?255:((im1b1==4)?4:((im1b1==0 and im2b1==1 and im7b1==0 and im3b1<$streampndvimx and im6b1<$streampbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$scenestreampvismeanmx and (im4b1>$streampmndwimn or im5b1>$streampndwimn))?1:((im1b1==0 and im2b1==1 and im7b1==0 and im3b1<$sedimentpriorndvimx and im4b1<$sedimentpriormndwimx and im6b1>$sedimentpriorbsimn and im6b1<$sedimentpriorbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$scenesedimentpriorvismeanmx)?5:im1b1)))",
+            "-out", $classstream, "uint8"
         )
 
-        if ($ApplyChannelContinuityRecovery) {
-            $continuityRadius = [Math]::Max(1, $ChannelContinuityRadius)
+        if ($applychannelcntyrcvy) {
+            $cntyr = [Math]::Max(1, $channelcntyr)
 
-            runotb -Args @("BandMath", "-il", $classStream, "-exp", "(im1b1==1)?1:0", "-out", $waterNear, "uint8")
-            runotb -Args @("BandMath", "-il", $classStream, "-exp", "(im1b1==3)?1:0", "-out", $bareNear, "uint8")
-            dilatebin -InputBinary $waterNear -OutputBinary $waterNearDil -Radius $continuityRadius
-            dilatebin -InputBinary $bareNear -OutputBinary $bareNearDil -Radius $continuityRadius
+            runOtb -Args @("BandMath", "-il", $classstream, "-exp", "(im1b1==1)?1:0", "-out", $waternear, "uint8")
+            runOtb -Args @("BandMath", "-il", $classstream, "-exp", "(im1b1==3)?1:0", "-out", $barenear, "uint8")
+            dilateBin -inputbinary $waternear -outputbinary $waterneardil -r $cntyr
+            dilateBin -inputbinary $barenear -outputbinary $bareneardil -r $cntyr
 
-            runotb -Args @(
+            runOtb -Args @(
                 "BandMath",
-                "-il", $classStream, $streamPriorDil, $ndvi, $mndwi, $ndwi, $bsi, $cloudPriorEx, $scene.FullName, $waterNearDil, $bareNearDil,
-                "-exp", "(im1b1==255)?255:((im1b1==4)?4:((im1b1==0 and im2b1==1 and im7b1==0 and im9b1==1 and im10b1==0 and im3b1<$StreamPriorNdviMax and im6b1<$StreamPriorBsiMax and (((im8b1+im8b2+im8b3)/3.0)/$ReflectanceScale)<$StreamPriorVisMeanMax and (im4b1>$StreamPriorMndwiMin or im5b1>$StreamPriorNdwiMin))?1:((im1b1==0 and im2b1==1 and im7b1==0 and im10b1==1 and im9b1==0 and im3b1<$SedimentPriorNdviMax and im4b1<$SedimentPriorMndwiMax and im6b1>$SedimentPriorBsiMin and im6b1<$SedimentPriorBsiMax and (((im8b1+im8b2+im8b3)/3.0)/$ReflectanceScale)<$SedimentPriorVisMeanMax)?3:((im1b1==0 and im2b1==1 and im7b1==0 and im9b1==1 and im10b1==1)?((im3b1<$StreamPriorNdviMax and im6b1<$StreamPriorBsiMax and (((im8b1+im8b2+im8b3)/3.0)/$ReflectanceScale)<$StreamPriorVisMeanMax and (im4b1>$StreamPriorMndwiMin or im5b1>$StreamPriorNdwiMin))?1:((im3b1<$SedimentPriorNdviMax and im4b1<$SedimentPriorMndwiMax and im6b1>$SedimentPriorBsiMin and im6b1<$SedimentPriorBsiMax and (((im8b1+im8b2+im8b3)/3.0)/$ReflectanceScale)<$SedimentPriorVisMeanMax)?3:im1b1)):im1b1))))",
-                "-out", $classContinuity, "uint8"
+                "-il", $classstream, $streampdil, $ndvi, $mndwi, $ndwi, $bsi, $cloudpriorex, $scene.FullName, $waterneardil, $bareneardil,
+                "-exp", "(im1b1==255)?255:((im1b1==4)?4:((im1b1==0 and im2b1==1 and im7b1==0 and im9b1==1 and im10b1==0 and im3b1<$streampndvimx and im6b1<$streampbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$scenestreampvismeanmx and (im4b1>$streampmndwimn or im5b1>$streampndwimn))?1:((im1b1==0 and im2b1==1 and im7b1==0 and im10b1==1 and im9b1==0 and im3b1<$sedimentpriorndvimx and im4b1<$sedimentpriormndwimx and im6b1>$sedimentpriorbsimn and im6b1<$sedimentpriorbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$scenesedimentpriorvismeanmx)?5:((im1b1==0 and im2b1==1 and im7b1==0 and im9b1==1 and im10b1==1)?((im3b1<$streampndvimx and im6b1<$streampbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$scenestreampvismeanmx and (im4b1>$streampmndwimn or im5b1>$streampndwimn))?1:((im3b1<$sedimentpriorndvimx and im4b1<$sedimentpriormndwimx and im6b1>$sedimentpriorbsimn and im6b1<$sedimentpriorbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$scenesedimentpriorvismeanmx)?5:im1b1)):im1b1))))",
+                "-out", $classcnty, "uint8"
             )
-
-            Move-Item -Path $classContinuity -Destination $classmap -Force
+            #continuity agression check 2019 as benchmark driest year, 2020 too incase it OVER does
+            Move-Item -Path $classcnty -Destination $classmap -Force
         }
         else {
-            Move-Item -Path $classStream -Destination $classmap -Force
+            Move-Item -Path $classstream -Destination $classmap -Force
         }
 
-        Remove-Item -Path $streamPriorRaw, $streamPriorDil, $cloudPriorEx, $classStream, $waterNear, $waterNearDil, $bareNear, $bareNearDil, $classContinuity -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $streampraw, $streampdil, $cloudpriorex, $classstream, $waternear, $waterneardil, $barenear, $bareneardil, $classcnty -Force -ErrorAction SilentlyContinue
     }
 
-    if ($ApplySinglePixelCleanup) {
-        $cleanupRad = [Math]::Max(1, $CleanupRadius)
-        $waterSeed = Join-Path $sceneOut ("{0}_cleanup_water_seed.tif" -f $dateLabel)
-        $waterSeedDil = Join-Path $sceneOut ("{0}_cleanup_water_seed_dil.tif" -f $dateLabel)
-        $bareSeed = Join-Path $sceneOut ("{0}_cleanup_bare_seed.tif" -f $dateLabel)
-        $bareSeedDil = Join-Path $sceneOut ("{0}_cleanup_bare_seed_dil.tif" -f $dateLabel)
-        $classClean = Join-Path $sceneOut ("{0}_class_map_cleanup.tif" -f $dateLabel)
+    if ($applychannelsedimentsplit) {
+        $channelpriorr = [Math]::Max(1, $channelsedimentpriorr)
+        $channelwaterr = [Math]::Max(1, $channelsedimentwateradjacencyr)
+        $channelpriorraw = Join-Path $sceneout ("{0}_channel_prior_raw.tif" -f $datelabel)
+        $channelpriordil = Join-Path $sceneout ("{0}_channel_prior_dil.tif" -f $datelabel)
+        $channelwaterseed = Join-Path $sceneout ("{0}_channel_water_seed.tif" -f $datelabel)
+        $channelwaterseeddil = Join-Path $sceneout ("{0}_channel_water_seed_dil.tif" -f $datelabel)
+        $classchannelsplit = Join-Path $sceneout ("{0}_class_map_channel_split.tif" -f $datelabel)
 
-        runotb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $waterSeed, "uint8")
-        runotb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==3)?1:0", "-out", $bareSeed, "uint8")
+        if ($usestreamp) {
+            runOtb -Args @(
+                "Rasterization",
+                "-in", $streampvector,
+                "-im", $scene.FullName,
+                "-background", "0",
+                "-mode", "binary",
+                "-mode.binary.foreground", "1",
+                "-out", $channelpriorraw, "uint8"
+            )
+            dilateBin -inputbinary $channelpriorraw -outputbinary $channelpriordil -r $channelpriorr
+        }
+        else {
+            runOtb -Args @("BandMath", "-il", $classmap, "-exp", "1", "-out", $channelpriordil, "uint8")
+        }
 
-        dilatebin -InputBinary $waterSeed -OutputBinary $waterSeedDil -Radius $cleanupRad
-        dilatebin -InputBinary $bareSeed -OutputBinary $bareSeedDil -Radius $cleanupRad
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $channelwaterseed, "uint8")
+        dilateBin -inputbinary $channelwaterseed -outputbinary $channelwaterseeddil -r $channelwaterr
 
-        runotb -Args @(
+        $channelsplitexpr = "(im1b1==3 and im2b1==1 and im6b1==0 and im7b1==1 and im3b1<$inchannelsedimentadjndvimx and im4b1<$inchannelsedimentadjmndwimx and im5b1>$inchannelsedimentbsimn and im5b1<$inchannelsedimentadjbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$inchannelsedimentadjvismeanmx)?5:im1b1"
+        if ($allowsedimentsplitwithoutwateradjacency) {
+            $channelsplitexpr = "(im1b1==3 and im2b1==1 and im6b1==0 and ((im7b1==1 and im3b1<$inchannelsedimentadjndvimx and im4b1<$inchannelsedimentadjmndwimx and im5b1>$inchannelsedimentbsimn and im5b1<$inchannelsedimentadjbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$inchannelsedimentadjvismeanmx) or (im7b1==0 and im3b1<$inchannelsedimentnoadjndvimx and im4b1<$inchannelsedimentnoadjmndwimx and im5b1>$inchannelsedimentnoadjbsimn and im5b1<$inchannelsedimentnoadjbsimx and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$inchannelsedimentnoadjvismeanmx)))?5:im1b1"
+        }
+
+        runOtb -Args @(
             "BandMath",
-            "-il", $classmap, $cloud, $ndvi, $mndwi, $ndwi, $bsi, $waterSeedDil, $bareSeedDil,
-            "-exp", "(im1b1==255 or im1b1==4)?im1b1:((im1b1==3 and im2b1==0 and im7b1==1 and im3b1<$WaterEdgeNdviMax and (im4b1>$WaterEdgeMndwiMin or im5b1>$WaterEdgeNdwiMin))?1:((im1b1==0 and im2b1==0 and im7b1==1 and im3b1<$WaterEdgeNdviMax and (im4b1>$WaterEdgeMndwiMin or im5b1>$WaterEdgeNdwiMin))?1:((im1b1==0 and im2b1==0 and im8b1==1 and im3b1<$SedimentPriorNdviMax and im4b1<$SedimentPriorMndwiMax and im6b1>$SedimentPriorBsiMin and im6b1<$SedimentPriorBsiMax)?3:im1b1)))",
-            "-out", $classClean, "uint8"
+            "-il", $classmap, $channelpriordil, $ndvi, $mndwi, $bsi, $cloud, $channelwaterseeddil, $scene.FullName,
+            "-exp", $channelsplitexpr,
+            "-out", $classchannelsplit, "uint8"
         )
 
-        Move-Item -Path $classClean -Destination $classmap -Force
-        Remove-Item -Path $waterSeed, $waterSeedDil, $bareSeed, $bareSeedDil, $classClean -Force -ErrorAction SilentlyContinue
+        Move-Item -Path $classchannelsplit -Destination $classmap -Force
+        Remove-Item -Path $channelpriorraw, $channelpriordil, $channelwaterseed, $channelwaterseeddil, $classchannelsplit -Force -ErrorAction SilentlyContinue
     }
 
-    runotb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==1)?1:0)", "-out", $water, "uint8")
-    runotb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==2)?1:0)", "-out", $vegetation, "uint8")
-    runotb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==3)?1:0)", "-out", $bare, "uint8")
-    runotb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?1:0", "-out", $cloud, "uint8")
-    runotb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==1 or im1b1==3)?1:0)", "-out", $active, "uint8")
+    if ($applysinglepixelcleanup) {
+        $cleanuprad = [Math]::Max(1, $cleanupr)
+        $waterseed = Join-Path $sceneout ("{0}_cleanup_water_seed.tif" -f $datelabel)
+        $waterseeddil = Join-Path $sceneout ("{0}_cleanup_water_seed_dil.tif" -f $datelabel)
+        $channelseed = Join-Path $sceneout ("{0}_cleanup_channel_seed.tif" -f $datelabel)
+        $channelseeddil = Join-Path $sceneout ("{0}_cleanup_channel_seed_dil.tif" -f $datelabel)
+        $classclean = Join-Path $sceneout ("{0}_class_map_cleanup.tif" -f $datelabel)
+
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $waterseed, "uint8")
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==5)?1:0", "-out", $channelseed, "uint8")
+
+        dilateBin -inputbinary $waterseed -outputbinary $waterseeddil -r $cleanuprad
+        dilateBin -inputbinary $channelseed -outputbinary $channelseeddil -r $cleanuprad
+
+        runOtb -Args @(
+            "BandMath",
+            "-il", $classmap, $cloud, $ndvi, $mndwi, $ndwi, $bsi, $waterseeddil, $channelseeddil,
+            "-exp", "(im1b1==255 or im1b1==4)?im1b1:((im1b1==0 and im2b1==0 and im7b1==1 and im3b1<$wateredgendvimx and (im4b1>$wateredgemndwimn or im5b1>$wateredgendwimn))?1:((im1b1==0 and im2b1==0 and im8b1==1 and im3b1<$sedimentpriorndvimx and im4b1<$sedimentpriormndwimx and im6b1>$sedimentpriorbsimn and im6b1<$sedimentpriorbsimx)?5:im1b1))",
+            "-out", $classclean, "uint8"
+        )
+
+        Move-Item -Path $classclean -Destination $classmap -Force
+        Remove-Item -Path $waterseed, $waterseeddil, $channelseed, $channelseeddil, $classclean -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($applyunclassifiedrcvy) {
+        $unclwaterr = [Math]::Max(1, $unclassifiedwateradjacencyr)
+        $unclpriorr = [Math]::Max(1, $unclassifiedchannelpriorr)
+        $unclwaterseed = Join-Path $sceneout ("{0}_uncl_water_seed.tif" -f $datelabel)
+        $unclwaterseeddil = Join-Path $sceneout ("{0}_uncl_water_seed_dil.tif" -f $datelabel)
+        $unclchannelpriorraw = Join-Path $sceneout ("{0}_uncl_channel_prior_raw.tif" -f $datelabel)
+        $unclchannelpriordil = Join-Path $sceneout ("{0}_uncl_channel_prior_dil.tif" -f $datelabel)
+        $classrecovered0 = Join-Path $sceneout ("{0}_class_map_unclassified_recovery.tif" -f $datelabel)
+
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $unclwaterseed, "uint8")
+        dilateBin -inputbinary $unclwaterseed -outputbinary $unclwaterseeddil -r $unclwaterr
+
+        if ($usestreamp) {
+            runOtb -Args @(
+                "Rasterization",
+                "-in", $streampvector,
+                "-im", $scene.FullName,
+                "-background", "0",
+                "-mode", "binary",
+                "-mode.binary.foreground", "1",
+                "-out", $unclchannelpriorraw, "uint8"
+            )
+            dilateBin -inputbinary $unclchannelpriorraw -outputbinary $unclchannelpriordil -r $unclpriorr
+        }
+        else {
+            runOtb -Args @("BandMath", "-il", $classmap, "-exp", "1", "-out", $unclchannelpriordil, "uint8")
+        }
+
+        runOtb -Args @(
+            "BandMath",
+            "-il", $classmap, $cloud, $ndvi, $mndwi, $bsi, $unclwaterseeddil, $unclchannelpriordil, $scene.FullName,
+            "-exp", "(im1b1==0 and im2b1==0 and im6b1==1 and im7b1==1 and im3b1<$inchannelsedimentndvimx and im4b1<$inchannelsedimentmndwimx and im5b1>$inchannelsedimentbsimn and (((im8b1+im8b2+im8b3)/3.0)/$reflectancescale)<$inchannelsedimentvismeanmx)?5:((im1b1==0 and im2b1==0 and im3b1<$unclassifiedbarendvimx and im5b1>$unclassifiedbarebsimn)?3:im1b1)",
+            "-out", $classrecovered0, "uint8"
+        )
+
+        Move-Item -Path $classrecovered0 -Destination $classmap -Force
+        Remove-Item -Path $unclwaterseed, $unclwaterseeddil, $unclchannelpriorraw, $unclchannelpriordil, $classrecovered0 -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($applywaterspksedimentcleanup) {
+        $spkr = [Math]::Max(1, $waterspkopeningr)
+        $spkpriorr = [Math]::Max(1, $waterspkchannelpriorr)
+        $spkwater = Join-Path $sceneout ("{0}_speckle_water.tif" -f $datelabel)
+        $spkwateropen = Join-Path $sceneout ("{0}_speckle_water_open.tif" -f $datelabel)
+        $spkmask = Join-Path $sceneout ("{0}_speckle_mask.tif" -f $datelabel)
+        $spkpriorraw = Join-Path $sceneout ("{0}_speckle_prior_raw.tif" -f $datelabel)
+        $spkpriordil = Join-Path $sceneout ("{0}_speckle_prior_dil.tif" -f $datelabel)
+        $classspk = Join-Path $sceneout ("{0}_class_map_speckle_cleanup.tif" -f $datelabel)
+
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $spkwater, "uint8")
+        runOtb -Args @(
+            "BinaryMorphologicalOperation",
+            "-in", $spkwater,
+            "-channel", "1",
+            "-structype", "box",
+            "-xradius", $spkr,
+            "-yradius", $spkr,
+            "-foreval", "1",
+            "-backval", "0",
+            "-filter", "opening",
+            "-out", $spkwateropen, "uint8"
+        )
+        runOtb -Args @("BandMath", "-il", $spkwater, $spkwateropen, "-exp", "(im1b1==1 and im2b1==0)?1:0", "-out", $spkmask, "uint8")
+
+        if ($usestreamp) {
+            runOtb -Args @(
+                "Rasterization",
+                "-in", $streampvector,
+                "-im", $scene.FullName,
+                "-background", "0",
+                "-mode", "binary",
+                "-mode.binary.foreground", "1",
+                "-out", $spkpriorraw, "uint8"
+            )
+            dilateBin -inputbinary $spkpriorraw -outputbinary $spkpriordil -r $spkpriorr
+        }
+        else {
+            runOtb -Args @("BandMath", "-il", $classmap, "-exp", "0", "-out", $spkpriordil, "uint8")
+        }
+
+        runOtb -Args @(
+            "BandMath",
+            "-il", $classmap, $spkmask, $spkpriordil, $cloud, $ndvi, $mndwi, $bsi, $scene.FullName,
+            "-exp", "(im2b1==1 and im4b1==0 and im6b1<$waterspksedimentndvimx and im7b1<$waterspksedimentmndwimx and im8b1>$waterspksedimentbsimn and (((im9b1+im9b2+im9b3)/3.0)/$reflectancescale)<$waterspksedimentvismeanmx)?((im3b1==1)?5:3):im1b1",
+            "-out", $classspk, "uint8"
+        )
+
+        Move-Item -Path $classspk -Destination $classmap -Force
+        Remove-Item -Path $spkwater, $spkwateropen, $spkmask, $spkpriorraw, $spkpriordil, $classspk -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($applybankclass0rcvy) {
+        $bankwaterr = [Math]::Max(1, $bankrcvywaterr)
+        $bankchannelr = [Math]::Max(1, $bankrcvychannelr)
+        $bankwaterseed = Join-Path $sceneout ("{0}_bank_water_seed.tif" -f $datelabel)
+        $bankwaterseeddil = Join-Path $sceneout ("{0}_bank_water_seed_dil.tif" -f $datelabel)
+        $bankchannelseed = Join-Path $sceneout ("{0}_bank_channel_seed.tif" -f $datelabel)
+        $bankchannelseeddil = Join-Path $sceneout ("{0}_bank_channel_seed_dil.tif" -f $datelabel)
+        $bankpriorraw = Join-Path $sceneout ("{0}_bank_prior_raw.tif" -f $datelabel)
+        $bankpriordil = Join-Path $sceneout ("{0}_bank_prior_dil.tif" -f $datelabel)
+        $classbankrecovered = Join-Path $sceneout ("{0}_class_map_bank_recovery.tif" -f $datelabel)
+
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $bankwaterseed, "uint8")
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==5)?1:0", "-out", $bankchannelseed, "uint8")
+        dilateBin -inputbinary $bankwaterseed -outputbinary $bankwaterseeddil -r $bankwaterr
+        dilateBin -inputbinary $bankchannelseed -outputbinary $bankchannelseeddil -r $bankchannelr
+
+        if ($usestreamp) {
+            runOtb -Args @(
+                "Rasterization",
+                "-in", $streampvector,
+                "-im", $scene.FullName,
+                "-background", "0",
+                "-mode", "binary",
+                "-mode.binary.foreground", "1",
+                "-out", $bankpriorraw, "uint8"
+            )
+            dilateBin -inputbinary $bankpriorraw -outputbinary $bankpriordil -r $finalfallbackchannelpriorr
+        }
+        else {
+            runOtb -Args @("BandMath", "-il", $classmap, "-exp", "0", "-out", $bankpriordil, "uint8")
+        }
+
+        runOtb -Args @(
+            "BandMath",
+            "-il", $classmap, $cloud, $ndvi, $mndwi, $bsi, $bankwaterseeddil, $bankchannelseeddil, $bankpriordil, $scene.FullName,
+            "-exp", "((im1b1==0 or im1b1==3) and im2b1==0 and (im6b1==1 or im7b1==1 or im8b1==1) and im3b1<$bankrcvyndvimx and im4b1<$bankrcvymndwimx and im5b1>$bankrcvybsimn and (((im9b1+im9b2+im9b3)/3.0)/$reflectancescale)<$bankrcvyvismeanmx)?5:im1b1",
+            "-out", $classbankrecovered, "uint8"
+        )
+
+        Move-Item -Path $classbankrecovered -Destination $classmap -Force
+        Remove-Item -Path $bankwaterseed, $bankwaterseeddil, $bankchannelseed, $bankchannelseeddil, $bankpriorraw, $bankpriordil, $classbankrecovered -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($applyfinalclass0fallback) {
+        $finalpriorr = [Math]::Max(1, $finalfallbackchannelpriorr)
+        $finalpriorraw = Join-Path $sceneout ("{0}_final0_channel_prior_raw.tif" -f $datelabel)
+        $finalpriordil = Join-Path $sceneout ("{0}_final0_channel_prior_dil.tif" -f $datelabel)
+        $classfinal0 = Join-Path $sceneout ("{0}_class_map_final0_fill.tif" -f $datelabel)
+
+        if ($usestreamp) {
+            runOtb -Args @(
+                "Rasterization",
+                "-in", $streampvector,
+                "-im", $scene.FullName,
+                "-background", "0",
+                "-mode", "binary",
+                "-mode.binary.foreground", "1",
+                "-out", $finalpriorraw, "uint8"
+            )
+            dilateBin -inputbinary $finalpriorraw -outputbinary $finalpriordil -r $finalpriorr
+        }
+        else {
+            runOtb -Args @("BandMath", "-il", $classmap, "-exp", "0", "-out", $finalpriordil, "uint8")
+        }
+
+        runOtb -Args @(
+            "BandMath",
+            "-il", $classmap, $finalpriordil, $cloud,
+            "-exp", "(im1b1==0 and im3b1==0 and im2b1==1)?5:im1b1",
+            "-out", $classfinal0, "uint8"
+        )
+
+        Move-Item -Path $classfinal0 -Destination $classmap -Force
+        Remove-Item -Path $finalpriorraw, $finalpriordil, $classfinal0 -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($applywatercntyrcvy) {
+        $contr = [Math]::Max(1, $watercntyr)
+        $contpriorr = [Math]::Max(1, $watercntypriorr)
+        $contwater = Join-Path $sceneout ("{0}_cont_water_seed.tif" -f $datelabel)
+        $contwaterdil = Join-Path $sceneout ("{0}_cont_water_seed_dil.tif" -f $datelabel)
+        $contpriorraw = Join-Path $sceneout ("{0}_cont_prior_raw.tif" -f $datelabel)
+        $contpriordil = Join-Path $sceneout ("{0}_cont_prior_dil.tif" -f $datelabel)
+        $classcont = Join-Path $sceneout ("{0}_class_map_water_continuity.tif" -f $datelabel)
+
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $contwater, "uint8")
+        dilateBin -inputbinary $contwater -outputbinary $contwaterdil -r $contr
+
+        if ($watercntyrecoverbare -and $usestreamp) {
+            runOtb -Args @(
+                "Rasterization",
+                "-in", $streampvector,
+                "-im", $scene.FullName,
+                "-background", "0",
+                "-mode", "binary",
+                "-mode.binary.foreground", "1",
+                "-out", $contpriorraw, "uint8"
+            )
+            dilateBin -inputbinary $contpriorraw -outputbinary $contpriordil -r $contpriorr
+        }
+        else {
+            runOtb -Args @("BandMath", "-il", $classmap, "-exp", "0", "-out", $contpriordil, "uint8")
+        }
+
+        $watercntyexpr = "(im1b1==5 and im2b1==0 and im6b1==1 and im3b1<$watercntyndvimx and (im4b1>$watercntymndwimn or im5b1>$watercntyndwimn))?1:im1b1"
+        if ($watercntyrecoverbare) {
+            $watercntyexpr = "((im1b1==5 and im2b1==0 and im6b1==1 and im3b1<$watercntyndvimx and (im4b1>$watercntymndwimn or im5b1>$watercntyndwimn)) or (im1b1==3 and im2b1==0 and im6b1==1 and im7b1==1 and im3b1<$watercntybarendvimx and im8b1<$watercntybarebsimx and (((im9b1+im9b2+im9b3)/3.0)/$reflectancescale)<$watercntybarevismeanmx and (im4b1>$watercntybaremndwimn or im5b1>$watercntybarendwimn)))?1:im1b1"
+        }
+        if ($watercntyrecoverclass0) {
+            $watercntyexpr = "((im1b1==5 and im2b1==0 and im6b1==1 and im3b1<$watercntyndvimx and (im4b1>$watercntymndwimn or im5b1>$watercntyndwimn)) or (im1b1==3 and im2b1==0 and im6b1==1 and im7b1==1 and im3b1<$watercntybarendvimx and im8b1<$watercntybarebsimx and (((im9b1+im9b2+im9b3)/3.0)/$reflectancescale)<$watercntybarevismeanmx and (im4b1>$watercntybaremndwimn or im5b1>$watercntybarendwimn)) or (im1b1==0 and im2b1==0 and im6b1==1 and im7b1==1 and im3b1<$watercntyclass0ndvimx and im8b1<$watercntyclass0bsimx and (((im9b1+im9b2+im9b3)/3.0)/$reflectancescale)<$watercntyclass0vismeanmx and (im4b1>$watercntyclass0mndwimn or im5b1>$watercntyclass0ndwimn)))?1:im1b1"
+        }
+
+        runOtb -Args @(
+            "BandMath",
+            "-il", $classmap, $cloud, $ndvi, $mndwi, $ndwi, $contwaterdil, $contpriordil, $bsi, $scene.FullName,
+            "-exp", $watercntyexpr,
+            "-out", $classcont, "uint8"
+        )
+
+        Move-Item -Path $classcont -Destination $classmap -Force
+        Remove-Item -Path $contwater, $contwaterdil, $contpriorraw, $contpriordil, $classcont -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($applywaterchannelclosing) {
+        $closer = [Math]::Max(1, $waterchannelclosingr)
+        $closepriorr = [Math]::Max(1, $waterchannelclosingpriorr)
+        $closewaterseed = Join-Path $sceneout ("{0}_close_water_seed.tif" -f $datelabel)
+        $closewaterclosed = Join-Path $sceneout ("{0}_close_water_closed.tif" -f $datelabel)
+        $closepriorraw = Join-Path $sceneout ("{0}_close_prior_raw.tif" -f $datelabel)
+        $closepriordil = Join-Path $sceneout ("{0}_close_prior_dil.tif" -f $datelabel)
+        $classclosed = Join-Path $sceneout ("{0}_class_map_channel_closing.tif" -f $datelabel)
+
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $closewaterseed, "uint8")
+        runOtb -Args @(
+            "BinaryMorphologicalOperation",
+            "-in", $closewaterseed,
+            "-channel", "1",
+            "-structype", "box",
+            "-xradius", $closer,
+            "-yradius", $closer,
+            "-foreval", "1",
+            "-backval", "0",
+            "-filter", "closing",
+            "-out", $closewaterclosed, "uint8"
+        )
+
+        if ($usestreamp) {
+            runOtb -Args @(
+                "Rasterization",
+                "-in", $streampvector,
+                "-im", $scene.FullName,
+                "-background", "0",
+                "-mode", "binary",
+                "-mode.binary.foreground", "1",
+                "-out", $closepriorraw, "uint8"
+            )
+            dilateBin -inputbinary $closepriorraw -outputbinary $closepriordil -r $closepriorr
+        }
+        else {
+            runOtb -Args @("BandMath", "-il", $classmap, "-exp", "1", "-out", $closepriordil, "uint8")
+        }
+
+        runOtb -Args @(
+            "BandMath",
+            "-il", $classmap, $cloud, $closewaterclosed, $closepriordil,
+            "-exp", "(im2b1==0 and im3b1==1 and im4b1==1 and (im1b1==0 or im1b1==3 or im1b1==5))?1:im1b1",
+            "-out", $classclosed, "uint8"
+        )
+
+        Move-Item -Path $classclosed -Destination $classmap -Force
+        Remove-Item -Path $closewaterseed, $closewaterclosed, $closepriorraw, $closepriordil, $classclosed -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($applydrychannelbridgercvy -and $usestreamp) {
+        $bridgecloser = [Math]::Max(1, $drychannelbridgewatercloser)
+        $bridgepriorr = [Math]::Max(1, $drychannelbridgepriorr)
+        $bridgewaterseed = Join-Path $sceneout ("{0}_bridge_water_seed.tif" -f $datelabel)
+        $bridgewaterclosed = Join-Path $sceneout ("{0}_bridge_water_closed.tif" -f $datelabel)
+        $bridgepriorraw = Join-Path $sceneout ("{0}_bridge_prior_raw.tif" -f $datelabel)
+        $bridgepriordil = Join-Path $sceneout ("{0}_bridge_prior_dil.tif" -f $datelabel)
+        $classbridge = Join-Path $sceneout ("{0}_class_map_bridge_recovery.tif" -f $datelabel)
+
+        runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==1)?1:0", "-out", $bridgewaterseed, "uint8")
+        runOtb -Args @(
+            "BinaryMorphologicalOperation",
+            "-in", $bridgewaterseed,
+            "-channel", "1",
+            "-structype", "box",
+            "-xradius", $bridgecloser,
+            "-yradius", $bridgecloser,
+            "-foreval", "1",
+            "-backval", "0",
+            "-filter", "closing",
+            "-out", $bridgewaterclosed, "uint8"
+        )
+
+        runOtb -Args @(
+            "Rasterization",
+            "-in", $streampvector,
+            "-im", $scene.FullName,
+            "-background", "0",
+            "-mode", "binary",
+            "-mode.binary.foreground", "1",
+            "-out", $bridgepriorraw, "uint8"
+        )
+        dilateBin -inputbinary $bridgepriorraw -outputbinary $bridgepriordil -r $bridgepriorr
+
+        $bridgeclasscondition = "(im1b1==3)"
+        if ($drychannelbridgeincludeclass0) {
+            $bridgeclasscondition = "($bridgeclasscondition or im1b1==0)"
+        }
+        if ($drychannelbridgeconvertsediment) {
+            $bridgeclasscondition = "($bridgeclasscondition or im1b1==5)"
+        }
+
+        $bridgeexpr = "(im2b1==0 and im3b1==1 and im4b1==1 and $bridgeclasscondition and im5b1<$drychannelbridgendvimx and im8b1<$drychannelbridgebsimx and (((im9b1+im9b2+im9b3)/3.0)/$reflectancescale)<$drychannelbridgevismeanmx and (im6b1>$drychannelbridgemndwimn or im7b1>$drychannelbridgendwimn))?1:im1b1"
+
+        runOtb -Args @(
+            "BandMath",
+            "-il", $classmap, $cloud, $bridgewaterclosed, $bridgepriordil, $ndvi, $mndwi, $ndwi, $bsi, $scene.FullName,
+            "-exp", $bridgeexpr,
+            "-out", $classbridge, "uint8"
+        )
+
+        Move-Item -Path $classbridge -Destination $classmap -Force
+        Remove-Item -Path $bridgewaterseed, $bridgewaterclosed, $bridgepriorraw, $bridgepriordil, $classbridge -Force -ErrorAction SilentlyContinue
+    }
+
+    runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==1)?1:0)", "-out", $water, "uint8")
+    runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==2)?1:0)", "-out", $vegetation, "uint8")
+    runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==3)?1:0)", "-out", $bare, "uint8")
+    runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==5)?1:0)", "-out", $channelsediment, "uint8")
+    runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?1:0", "-out", $cloud, "uint8")
+    runOtb -Args @("BandMath", "-il", $classmap, "-exp", "(im1b1==4)?255:((im1b1==1 or im1b1==5)?1:0)", "-out", $active, "uint8")
 }
 
-Write-Output "classification set to $OutputRoot"
+Write-Output "classification set to $outputroot"
