@@ -1,3 +1,5 @@
+#this whole file is just a test script to make sure chirps data looks correct in series
+
 library(dotenv)
 
 load_dot_env("C:\\Users\\Student\\Desktop\\Masters\\Dissertation\\03_Methods\\01_Mapping\\.env")
@@ -7,7 +9,6 @@ rainfall_data <- "palanan_chirps_2016-2026.csv"
 
 fileTot <- Sys.getenv("YEARLY_TOTAL")
 fileMAM   <- Sys.getenv("YEARLY_MAM")
-
 df <- read.csv(rainfall_data)
 df$date <- as.Date(df$date)
 df$year  <- as.integer(format(df$date, "%Y"))
@@ -16,12 +17,10 @@ df$month <- as.integer(format(df$date, "%m"))
 yearlyTot <- aggregate(chirps ~ year, data = df, FUN = sum, na.rm = TRUE)
 names(yearlyTot)[2] <- "total_mm"
 write.csv(yearlyTot, fileTot, row.names = FALSE)
-
 dfMAM <- df[df$month %in% c(3, 4, 5), ]
 yearlyMAM <- aggregate(chirps ~ year, data = dfMAM, FUN = sum, na.rm = TRUE)
 names(yearlyMAM)[2] <- "total_mm_MAM"
 write.csv(yearlyMAM, fileMAM, row.names = FALSE)
-
 yearlyTot <- read.csv(fileTot)
 yearlyMAM   <- read.csv(fileMAM)
 
