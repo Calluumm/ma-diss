@@ -272,6 +272,7 @@ def main() -> None:
     writeCsv(rows, outputstatscsv)
     print(f"wrote {outputstatscsv}")
 
-
+#what if i streamlined all files into one execute uhhhhh note to self
 if __name__ == "__main__":
     main()
+#note to self note to self note to self
