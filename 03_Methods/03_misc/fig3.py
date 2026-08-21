@@ -130,110 +130,104 @@ def drawCatchmentOutline(
         draw.line(pts, fill=(22, 22, 22), width=3)
 
 
-def buildClassifiedMap() -> None:
-    arr = tifffile.imread(CLASS_MAP)
-    tf = tifffile.TiffFile(CLASS_MAP)
-    page = tf.pages[0]
+arr = tifffile.imread(CLASS_MAP)
+tf = tifffile.TiffFile(CLASS_MAP)
+page = tf.pages[0]
 
-    px_scale = page.tags["ModelPixelScaleTag"].value
-    tie = page.tags["ModelTiepointTag"].value
-    px_deg_x = float(px_scale[0])
-    px_deg_y = float(px_scale[1])
-    lon0 = float(tie[3])
-    lat0 = float(tie[4])
+px_scale = page.tags["ModelPixelScaleTag"].value
+tie = page.tags["ModelTiepointTag"].value
+px_deg_x = float(px_scale[0])
+px_deg_y = float(px_scale[1])
+lon0 = float(tie[3])
+lat0 = float(tie[4])
 
-    h, w = arr.shape
-    lat_center = lat0 - (h * px_deg_y) / 2.0
-    m_per_deg_lon = 111320.0 * math.cos(math.radians(lat_center))
-    m_per_px_x = px_deg_x * m_per_deg_lon
+h, w = arr.shape
+lat_center = lat0 - (h * px_deg_y) / 2.0
+m_per_deg_lon = 111320.0 * math.cos(math.radians(lat_center))
+m_per_px_x = px_deg_x * m_per_deg_lon
 
-    rgba = np.zeros((h, w, 3), dtype=np.uint8)
-    for code, col in CLASS_STYLE.items():
-        rgba[arr == code] = np.array(col, dtype=np.uint8)
+rgba = np.zeros((h, w, 3), dtype=np.uint8)
+for code, col in CLASS_STYLE.items():
+    rgba[arr == code] = np.array(col, dtype=np.uint8)
 
-    map_img = Image.fromarray(rgba, mode="RGB")
+map_img = Image.fromarray(rgba, mode="RGB")
 
-    page_w, page_h = 2200, 1700
-    panel = Image.new("RGB", (page_w, page_h), BG)
-    draw = ImageDraw.Draw(panel)
-    f_title = font(50, bold=True)
-    f_text = font(24)
-    f_small = font(21)
+page_w, page_h = 1750, 1550
+panel = Image.new("RGB", (page_w, page_h), BG)
+draw = ImageDraw.Draw(panel)
+f_title = font(50, bold=True)
+f_text = font(24)
+f_small = font(21)
 
-    draw.text((58, 28), "Classified Sentinel-2 scene (2021-05-02)", fill=TEXT_DARK, font=f_title)
+draw.text((58, 28), "Classified Sentinel-2 scene (2021-05-02)", fill=TEXT_DARK, font=f_title)
 
-    map_box = (56, 108, 1658, 1604)
-    mw = map_box[2] - map_box[0]
-    mh = map_box[3] - map_box[1]
-    scale = min(mw / w, mh / h)
-    dw, dh = int(w * scale), int(h * scale)
-    resized = map_img.resize((dw, dh), Image.NEAREST)
-    ox = map_box[0] + (mw - dw) // 2
-    oy = map_box[1] + (mh - dh) // 2
+map_box = (30, 105, 1280, 1470)
+mw = map_box[2] - map_box[0]
+mh = map_box[3] - map_box[1]
+scale = min(mw / w, mh / h)
+dw, dh = int(w * scale), int(h * scale)
+resized = map_img.resize((dw, dh), Image.NEAREST)
+ox = map_box[0] + (mw - dw) // 2
+oy = map_box[1] + (mh - dh) // 2
 
-    panel.paste(resized, (ox, oy))
+panel.paste(resized, (ox, oy))
 
-    catch_rings = loadCatchmentRingsLonlat(CATCHMENT_SHP)
-    drawCatchmentOutline(draw, catch_rings, lon0, lat0, px_deg_x, px_deg_y, scale, ox, oy)
+catch_rings = loadCatchmentRingsLonlat(CATCHMENT_SHP)
+drawCatchmentOutline(draw, catch_rings, lon0, lat0, px_deg_x, px_deg_y, scale, ox, oy)
 
-    nx, ny = 1738, 218
-    draw.line((nx, ny + 120, nx, ny + 25), fill=(40, 40, 40), width=8)
-    draw.polygon([(nx, ny), (nx - 18, ny + 35), (nx + 18, ny + 35)], fill=(40, 40, 40))
-    draw.text((nx - 15, ny + 132), "N", fill=(40, 40, 40), font=font(30, bold=True))
+nx, ny = ox + dw - 70, oy + dh - 260
+draw.line((nx, ny + 120, nx, ny + 25), fill=(40, 40, 40), width=8)
+draw.polygon([(nx, ny), (nx - 18, ny + 35), (nx + 18, ny + 35)], fill=(40, 40, 40))
+draw.text((nx - 15, ny + 132), "N", fill=(40, 40, 40), font=font(30, bold=True))
 
-    target = (dw * m_per_px_x) / 5.0
-    bar_m = niceScaleLength(target)
-    bar_px = max(60, int(bar_m / m_per_px_x * scale))
-    sx0 = ox + dw - bar_px - 70
-    sy0 = oy + dh - 64
+bar_m = 10000.0
+bar_px = max(60, int(bar_m / m_per_px_x * scale))
+sx0 = ox + dw - bar_px - 70
+sy0 = oy + dh - 64
 
-    draw.rounded_rectangle((sx0 - 14, sy0 - 24, sx0 + bar_px + 14, sy0 + 48), radius=6, fill=PANEL_BG, outline=(180, 173, 160), width=1)
-    half = bar_px // 2
-    draw.rectangle((sx0, sy0, sx0 + half, sy0 + 12), fill=(242, 242, 242), outline=(30, 30, 30), width=1)
-    draw.rectangle((sx0 + half, sy0, sx0 + bar_px, sy0 + 12), fill=(35, 35, 35), outline=(30, 30, 30), width=1)
+draw.rounded_rectangle((sx0 - 14, sy0 - 24, sx0 + bar_px + 14, sy0 + 48), radius=6, fill=PANEL_BG, outline=(180, 173, 160), width=1)
+half = bar_px // 2
+draw.rectangle((sx0, sy0, sx0 + half, sy0 + 12), fill=(242, 242, 242), outline=(30, 30, 30), width=1)
+draw.rectangle((sx0 + half, sy0, sx0 + bar_px, sy0 + 12), fill=(35, 35, 35), outline=(30, 30, 30), width=1)
 
-    f_scale = font(26, bold=True)
-    label = f"{int(bar_m):,} m" if bar_m < 1000 else f"{bar_m/1000:.1f} km"
-    draw.text((sx0, sy0 + 14), "0", fill=(35, 35, 35), font=f_scale)
-    draw.text((sx0 + bar_px, sy0 + 14), label, fill=(35, 35, 35), font=f_scale, anchor="ra")
+f_scale = font(26, bold=True)
+label = f"{int(bar_m):,} m" if bar_m < 1000 else f"{bar_m/1000:.1f} km"
+draw.text((sx0, sy0 + 14), "0", fill=(35, 35, 35), font=f_scale)
+draw.text((sx0 + bar_px, sy0 + 14), label, fill=(35, 35, 35), font=f_scale, anchor="ra")
 
-    leg = (1700, 366, 2140, 1218)
-    draw.rounded_rectangle(leg, radius=14, fill=PANEL_BG, outline=PANEL_BORDER, width=2)
-    draw.text((leg[0] + 22, leg[1] + 16), "Legend", fill=TEXT_DARK, font=font(32, bold=True))
+leg = (1320, 250, 1690, 960)
+draw.rounded_rectangle(leg, radius=14, fill=PANEL_BG, outline=PANEL_BORDER, width=2)
+draw.text((leg[0] + 22, leg[1] + 16), "Legend", fill=TEXT_DARK, font=font(32, bold=True))
 
-    present = [int(v) for v in np.unique(arr)]
-    y = leg[1] + 78
-    for code in [1, 2, 3, 5, 4, 0]:
-        if code not in present:
-            continue
-        col = CLASS_STYLE[code]
-        draw.rectangle((leg[0] + 22, y, leg[0] + 62, y + 28), fill=col, outline=(90, 90, 90), width=1)
-        draw.text((leg[0] + 74, y + 1), CLASS_LABEL[code], fill=TEXT_MID, font=f_text)
-        y += 48
+present = [int(v) for v in np.unique(arr)]
+y = leg[1] + 78
+for code in [1, 2, 3, 5, 4, 0]:
+    if code not in present:
+        continue
+    col = CLASS_STYLE[code]
+    draw.rectangle((leg[0] + 22, y, leg[0] + 62, y + 28), fill=col, outline=(90, 90, 90), width=1)
+    draw.text((leg[0] + 74, y + 1), CLASS_LABEL[code], fill=TEXT_MID, font=f_text)
+    y += 48
 
-    draw.line((leg[0] + 22, y + 12, leg[0] + 62, y + 12), fill=(246, 244, 240), width=8)
-    draw.line((leg[0] + 22, y + 12, leg[0] + 62, y + 12), fill=(22, 22, 22), width=3)
-    draw.text((leg[0] + 74, y), "Catchment boundary", fill=TEXT_MID, font=f_text)
+draw.line((leg[0] + 22, y + 12, leg[0] + 62, y + 12), fill=(246, 244, 240), width=8)
+draw.line((leg[0] + 22, y + 12, leg[0] + 62, y + 12), fill=(22, 22, 22), width=3)
+draw.text((leg[0] + 74, y), "Catchment boundary", fill=TEXT_MID, font=f_text)
 
-    lon_min = lon0
-    lon_max = lon0 + w * px_deg_x
-    lat_max = lat0
-    lat_min = lat0 - h * px_deg_y
-    draw.text((1700, 1270), "CRS: WGS 84 (EPSG:4326)", fill=TEXT_MID, font=f_small)
-    draw.text((1700, 1303), f"Extent: {lon_min:.3f} to {lon_max:.3f} E", fill=TEXT_MID, font=f_small)
-    draw.text((1700, 1336), f"        {lat_min:.3f} to {lat_max:.3f} N", fill=TEXT_MID, font=f_small)
+lon_min = lon0
+lon_max = lon0 + w * px_deg_x
+lat_max = lat0
+lat_min = lat0 - h * px_deg_y
+draw.text((1320, 1010), "CRS: WGS 84 (EPSG:4326)", fill=TEXT_MID, font=f_small)
+draw.text((1320, 1043), f"Extent: {lon_min:.3f} to {lon_max:.3f} E", fill=TEXT_MID, font=f_small)
+draw.text((1320, 1076), f"        {lat_min:.3f} to {lat_max:.3f} N", fill=TEXT_MID, font=f_small)
 
-    draw.text(
-        (56, 1620),
-        "Map is an intermediate used in the classification workflow",
-        fill=TEXT_MID,
-        font=f_small,
-    )
+draw.text(
+    (40, 1470),
+    "Map is an intermediate used in the classification workflow",
+    fill=TEXT_MID,
+    font=f_small,
+)
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    panel.save(OUT, format="PNG")
-    print(f"wrote {OUT}")
-
-
-if __name__ == "__main__":
-    buildClassifiedMap()
+OUT.parent.mkdir(parents=True, exist_ok=True)
+panel.save(OUT, format="PNG")
+print(f"wrote {OUT}")
