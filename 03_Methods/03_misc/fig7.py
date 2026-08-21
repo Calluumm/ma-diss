@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 SUMMARY_CSV = ROOT / "04_Analysis" / "channelrainfallsum" / "channel_rainfall_summary_all.csv"
 STATS_CSV = ROOT / "04_Analysis" / "channelrainfallsum" / "rainfall_change_stats.csv"
 OUT_PNG = ROOT / "05_Figures" / "fig7.png"
+OUT_SUPPLEMENTARY_PNG = ROOT / "05_Figures" / "suppl_bidirectional.png"
 
 GEOM_ROOTS = {
     "2023": ROOT / "02_Data" / "02_Processed" / "Sentinel2_Geomorphology_OTB_2023",
@@ -121,7 +122,6 @@ def choose_area_unit(records: list[Record]) -> tuple[float, str]:
         values.extend([abs(rec.gain_m2), abs(rec.loss_m2), abs(rec.change_m2)])
     if not values:
         return 1.0, "m2"
-    # Switch to km2 if values are very large.
     return (1_000_000.0, "km2") if np.nanmedian(values) >= 2_000_000.0 else (1.0, "m2")
 
 
@@ -331,7 +331,6 @@ def panel_b_bidirectional_by_context(
 
     draw.text((panel.left + 14, panel.top + 42), f"signed asinh scale ({area_unit})", fill=TEXT_MID, font=f_small)
 
-    # Legend
     lx = panel.right - 310
     ly = panel.top + 16
     draw.rounded_rectangle((lx, ly, lx + 275, ly + 52), radius=8, fill=(248, 245, 238), outline=(208, 201, 188), width=1)
@@ -353,7 +352,7 @@ def panel_c_medians_by_context(
     f_small,
 ) -> None:
     draw_panel_box(draw, panel)
-    draw.text((panel.left + 16, panel.top + 12), "C. Median gain and loss by context", fill=TEXT_DARK, font=f_title)
+    draw.text((panel.left + 16, panel.top + 12), "Median gain and loss by context", fill=TEXT_DARK, font=f_title)
 
     stats = []
     max_abs = 1.0
@@ -373,6 +372,11 @@ def panel_c_medians_by_context(
     draw.rectangle((plot.left, plot.top, plot.right, plot.bottom), outline=(168, 161, 149), width=2)
 
     x_lim = max_abs * 1.35
+    raw_step = (2 * x_lim) / 6
+    magnitude = 10 ** int(np.floor(np.log10(raw_step)))
+    step_options = [1, 2, 5, 10]
+    step = next((candidate * magnitude for candidate in step_options if raw_step <= candidate * magnitude), 10 * magnitude)
+    x_lim = 1000000
     x0 = int(map_linear(0.0, -x_lim, x_lim, plot.left + 4, plot.right - 4))
     draw.line((x0, plot.top, x0, plot.bottom), fill=(32, 32, 32), width=2)
 
@@ -395,13 +399,10 @@ def panel_c_medians_by_context(
 
         draw.text((plot.right - 260, y - 8), f"{MASK_LABEL[mask]} | n={n}", fill=TEXT_MID, font=f_small)
 
-    for k in range(7):
-        xv = -x_lim + 2 * x_lim * (k / 6)
+    for xv in [-1000000, -750000, -500000, -250000, 0, 250000, 500000, 750000, 1000000]:
         x = int(map_linear(xv, -x_lim, x_lim, plot.left + 4, plot.right - 4))
         draw.line((x, plot.bottom, x, plot.bottom + 5), fill=(120, 114, 104), width=1)
-        draw.text((x - 18, plot.bottom + 7), f"{xv:.1f}", fill=TEXT_MID, font=f_small)
-
-    draw.text((plot.right - 290, plot.bottom + 30), f"left=loss, right=gain ({area_unit})", fill=TEXT_MID, font=f_small)
+        draw.text((x, plot.bottom + 7), f"{xv:,.0f}", fill=TEXT_MID, font=f_small, anchor="ma")
 
 
 
@@ -498,46 +499,57 @@ def panel_d_comparison_table(
 
 
 
-def build_figure() -> None:
-    records = load_records(SUMMARY_CSV)
-    if not records:
-        raise RuntimeError("No records loaded from summary CSV.")
+records = load_records(SUMMARY_CSV)
+if not records:
+    raise RuntimeError("No records loaded from summary CSV.")
 
-    area_factor, area_unit = choose_area_unit(records)
+area_factor, area_unit = choose_area_unit(records)
 
-    W, H = 2500, 2000
-    canvas = Image.new("RGB", (W, H), BG)
-    draw = ImageDraw.Draw(canvas)
+f_h2 = font(36, bold=True)
+f_body = font(27)
+f_small = font(22)
 
-    f_h1 = font(56, bold=True)
-    f_h2 = font(28, bold=True)
-    f_body = font(23)
-    f_small = font(18)
+W = 2500
+main_canvas = Image.new("RGB", (W, 680), BG)
+main_draw = ImageDraw.Draw(main_canvas)
+panel_c_medians_by_context(
+    main_draw,
+    Rect(46, 34, 2454, 620),
+    records,
+    area_factor,
+    area_unit,
+    f_h2,
+    f_body,
+    f_small,
+)
+main_draw.text(
+    (56, 638),
+    f"All area values shown in {area_unit}; left bars show loss and right bars show gain.",
+    fill=(72, 66, 58),
+    font=f_small,
+)
+main_canvas.save(OUT_PNG, format="PNG")
 
-    draw.text((54, 30), "Rainfall-Change Context Comparison", fill=TEXT_DARK, font=f_h1)
-    draw.text(
-        (56, 106),
-        "Comparing year windows (2023, 2025) against the long context to test event-driven vs gradual change.",
-        fill=TEXT_MID,
-        font=f_body,
-    )
-
-    p1 = Rect(46, 165, 2454, 710)
-    p2 = Rect(46, 740, 2454, 1250)
-    p3 = Rect(46, 1280, 2454, 1910)
-
-    panel_b_bidirectional_by_context(draw, p1, records, area_factor, area_unit, f_h2, f_body, f_small)
-    panel_c_medians_by_context(draw, p2, records, area_factor, area_unit, f_h2, f_body, f_small)
-    panel_d_comparison_table(draw, p3, f_h2, f_body, f_small)
-
-    footer = f"All area values shown in {area_unit}; water footprint shown as percent of valid water-mask pixels."
-    draw.text((56, 1935), footer, fill=(72, 66, 58), font=f_small)
-
-    OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(OUT_PNG, format="PNG")
-    print(f"wrote {OUT_PNG}")
-
-
-if __name__ == "__main__":
-    build_figure()
+supplementary_canvas = Image.new("RGB", (W, 620), BG)
+supplementary_draw = ImageDraw.Draw(supplementary_canvas)
+panel_b_bidirectional_by_context(
+    supplementary_draw,
+    Rect(46, 34, 2454, 570),
+    records,
+    area_factor,
+    area_unit,
+    f_h2,
+    f_body,
+    f_small,
+)
+supplementary_draw.text(
+    (56, 582),
+    f"Supplementary figure; all area values shown in {area_unit}.",
+    fill=(72, 66, 58),
+    font=f_small,
+)
+supplementary_canvas.save(OUT_SUPPLEMENTARY_PNG, format="PNG")
+OUT_PNG.parent.mkdir(parents=True, exist_ok=True)
+print(f"wrote {OUT_PNG}")
+print(f"wrote {OUT_SUPPLEMENTARY_PNG}")
 
