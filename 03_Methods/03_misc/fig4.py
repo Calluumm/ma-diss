@@ -7,8 +7,8 @@ import fiona
 from fiona.transform import transform_geom
 
 root = Path("C:/Users/Student/Desktop/Masters/Dissertation")
-predate = "2023-08-05"
-postdate = "2023-09-09"
+predate = "2023-05-07"
+postdate = "2024-02-21"
 classroot = root / "02_Data" / "02_Processed" / "Sentinel2_Geomorphology_OTB_2023"
 changeroot = root / "02_Data" / "02_Processed" / "Sentinel2_ChangeFramework_2023" / "active_channel_mask"
 catchmentshp = root / "02_Data" / "01_Raw" / "shp_check" / "Palanan-catchment-unextended.shp"
@@ -16,7 +16,7 @@ catchmentcrs = "EPSG:3857"
 catchmentpadpx = 110
 displaybufferpx = 140
 displayframepx = 4
-riverlineshp = root / "02_Data" / "01_Raw" / "manual stream" / "manual4326.shp"
+riverlineshp = root / "02_Data" / "01_Raw" / "manual4326-extended.shp"
 riverlinecrs = "EPSG:4326"
 riverbufferm = 50.0
 fallbackbbox = (1150, 900, 2940, 3560)
@@ -29,13 +29,22 @@ classcolors = {
     3: (255, 221, 85),   # bare
     4: (220, 50, 47),    # cloud
     5: (230, 126, 34),   # channel sediment
-    255: (20, 20, 20),   # nodata
+    255: (255, 0, 255),  # invalid
 }
 changecolors = {
     0: (45, 45, 45),      # no change
     1: (0, 166, 81),      # gain
     2: (204, 37, 41),     # loss
     255: (20, 20, 20),    # invalid
+}
+rivercolor = (70, 176, 232)
+classlabels = {
+    1: "Water",
+    2: "Vegetation",
+    3: "Bare sediment",
+    4: "Cloud",
+    5: "Channel sediment",
+    255: "Invalid",
 }
 defaultcolor = (255, 0, 255)
 outsidecolor = (235, 235, 235)
@@ -63,6 +72,36 @@ def coloury(arr: np.ndarray, palette: dict[int, tuple[int, int, int]]) -> np.nda
         rgb[mask, 1] = color[1]
         rgb[mask, 2] = color[2]
     return rgb
+
+
+def overlayChangeOnClass(classrgb: np.ndarray, change: np.ndarray, river: np.ndarray, change_domain: np.ndarray) -> np.ndarray:
+    out = np.zeros((*change.shape, 3), dtype=np.uint8)
+    out[river] = rivercolor
+    for value in (1, 2):
+        out[(change == value) & change_domain] = changecolors[value]
+    return out
+
+
+def classifiedRiverMask(pre: np.ndarray, post: np.ndarray, catchment: np.ndarray) -> np.ndarray:
+    active = np.isin(pre, (1, 5)) | np.isin(post, (1, 5))
+    return active & catchment
+
+
+def findZoomBoxes(change: np.ndarray, river: np.ndarray, catchment: np.ndarray) -> list[tuple[int, int, int, int]]:
+    height, width = change.shape
+    ys, xs = np.where(catchment)
+    if xs.size:
+        catch_x1, catch_x2 = int(xs.min()), int(xs.max()) + 1
+        catch_y1, catch_y2 = int(ys.min()), int(ys.max()) + 1
+    else:
+        catch_x1, catch_x2, catch_y1, catch_y2 = 0, width, 0, height
+    catch_width = catch_x2 - catch_x1
+    catch_height = catch_y2 - catch_y1
+    return [
+        (catch_x1 + int(catch_width * 0.75), catch_y1 + int(catch_height * 0.04), catch_x1 + int(catch_width * 0.88), catch_y1 + int(catch_height * 0.14)),
+        (catch_x1 + int(catch_width * 0.60), catch_y1 + int(catch_height * 0.175), catch_x1 + int(catch_width * 0.73), catch_y1 + int(catch_height * 0.285)),
+        (catch_x1 + int(catch_width * 0.54), catch_y1 + int(catch_height * 0.423), catch_x1 + int(catch_width * 0.66), catch_y1 + int(catch_height * 0.503)),
+    ]
 
 
 def crop(arr: np.ndarray, bbox: tuple[int, int, int, int]) -> np.ndarray:
@@ -385,144 +424,161 @@ def deriveChangeFromClass(pre: np.ndarray, post: np.ndarray) -> np.ndarray:
 
 
 
-def main() -> None:
-    preclasspath = classroot / predate / f"{predate}_class_map.tif"
-    postclasspath = classroot / postdate / f"{postdate}_class_map.tif"
-    changepath = changeroot / f"{predate}_to_{postdate}" / f"change_class_clean_{predate}_to_{postdate}.tif"
+preclasspath = classroot / predate / f"{predate}_class_map.tif"
+postclasspath = classroot / postdate / f"{postdate}_class_map.tif"
+changepath = changeroot / f"{predate}_to_{postdate}" / f"change_class_clean_{predate}_to_{postdate}.tif"
 
-    pre = loadSingleBand(preclasspath)
-    post = loadSingleBand(postclasspath)
-    if changepath.exists():
-        change = loadSingleBand(changepath)
-    else:
-        change = deriveChangeFromClass(pre, post)
+pre = loadSingleBand(preclasspath)
+post = loadSingleBand(postclasspath)
+if changepath.exists():
+    change = loadSingleBand(changepath)
+else:
+    change = deriveChangeFromClass(pre, post)
 
-    if pre.shape != post.shape or pre.shape != change.shape:
-        raise RuntimeError("Input rasters do not share the same shape; cannot make aligned panel extent")
+if pre.shape != post.shape or pre.shape != change.shape:
+    raise RuntimeError("Input rasters do not share the same shape; cannot make aligned panel extent")
 
-    bbox = fallbackbbox
-    fullinsidemask = np.ones_like(pre, dtype=bool)
-    fulldisplaymask = np.ones_like(pre, dtype=bool)
-    fullrivercorridor = np.ones_like(pre, dtype=bool)
-    pxaream2 = 100.0
+bbox = fallbackbbox
+fullinsidemask = np.ones_like(pre, dtype=bool)
+fulldisplaymask = np.ones_like(pre, dtype=bool)
+fullrivercorridor = np.ones_like(pre, dtype=bool)
+pxaream2 = 100.0
 
-    gt, (w, h), rastercrs = readGeorefWithGdalinfo(preclasspath)
-    if (h, w) != pre.shape:
-        raise RuntimeError("Raster size from GDAL metadata does not match loaded image array")
+gt, (w, h), rastercrs = readGeorefWithGdalinfo(preclasspath)
+if (h, w) != pre.shape:
+    raise RuntimeError("Raster size from GDAL metadata does not match loaded image array")
 
-    pxaream2 = pixelAreaM2(gt, h)
+pxaream2 = pixelAreaM2(gt, h)
 
-    catchmentmask = buildCatchmentMask(catchmentshp, rastercrs, gt, (w, h), catchmentcrs)
-    fullinsidemask = catchmentmask > 0
-    fulldisplaymask = dilateMask(fullinsidemask, max(0, displaybufferpx))
-    bbox = bboxFromMask(fulldisplaymask.astype(np.uint8) * 255, max(0, displayframepx))
+catchmentmask = buildCatchmentMask(catchmentshp, rastercrs, gt, (w, h), catchmentcrs)
+fullinsidemask = catchmentmask > 0
+fulldisplaymask = dilateMask(fullinsidemask, max(0, displaybufferpx))
+bbox = bboxFromMask(fulldisplaymask.astype(np.uint8) * 255, max(0, displayframepx))
 
-    linemask = buildLineMask(riverlineshp, rastercrs, gt, (w, h), riverlinecrs)
-    if np.any(linemask > 0):
-        pxm = metersPerPixel(gt, h)
-        bufferpx = max(1, int(np.ceil(riverbufferm / pxm)))
-        fullrivercorridor = dilateMask(linemask > 0, bufferpx)
+linemask = buildLineMask(riverlineshp, rastercrs, gt, (w, h), riverlinecrs)
+if np.any(linemask > 0):
+    pxm = metersPerPixel(gt, h)
+    bufferpx = max(1, int(np.ceil(riverbufferm / pxm)))
+    fullrivercorridor = dilateMask(linemask > 0, bufferpx)
 
-    precrop = crop(pre, bbox)
-    postcrop = crop(post, bbox)
-    changecrop = crop(change, bbox)
-    insidecrop = crop(fullinsidemask.astype(np.uint8), bbox) > 0
-    displaycrop = crop(fulldisplaymask.astype(np.uint8), bbox) > 0
-    rivercrop = crop(fullrivercorridor.astype(np.uint8), bbox) > 0
+precrop = crop(pre, bbox)
+postcrop = crop(post, bbox)
+changecrop = crop(change, bbox)
+insidecrop = crop(fullinsidemask.astype(np.uint8), bbox) > 0
+displaycrop = crop(fulldisplaymask.astype(np.uint8), bbox) > 0
+rivercrop = crop(fullrivercorridor.astype(np.uint8), bbox) > 0
+classifiedrivercrop = classifiedRiverMask(precrop, postcrop, insidecrop) & rivercrop
 
-    changeeval = changecrop.copy()
-    changeeval[~insidecrop] = 255
-    outsidecorridorchange = ((changeeval == 1) | (changeeval == 2)) & (~rivercrop)
-    changeeval[outsidecorridorchange] = 0
+changeeval = changecrop.copy()
+changeeval[~insidecrop] = 255
+outsidecorridorchange = ((changeeval == 1) | (changeeval == 2)) & (~rivercrop)
+changeeval[outsidecorridorchange] = 0
 
-    prergb = coloury(precrop, classcolors)
-    postrgb = coloury(postcrop, classcolors)
-    changergb = coloury(changeeval, changecolors)
+prergb = coloury(precrop, classcolors)
+postrgb = coloury(postcrop, classcolors)
+changergb = overlayChangeOnClass(postrgb, changeeval, classifiedrivercrop, rivercrop)
 
-    metricdomain = insidecrop & rivercrop
-    validcls = (precrop != 255) & (postcrop != 255) & (precrop != 4) & (postcrop != 4)
-    domain = metricdomain & validcls
+metricdomain = insidecrop & rivercrop
+validcls = (precrop != 255) & (postcrop != 255) & (precrop != 4) & (postcrop != 4)
+domain = metricdomain & validcls
 
-    watergainpx = int(np.sum(domain & (precrop != 1) & (postcrop == 1)))
-    waterlosspx = int(np.sum(domain & (precrop == 1) & (postcrop != 1)))
-    sedimentgainpx = int(np.sum(domain & (precrop != 5) & (postcrop == 5)))
-    sedimentlosspx = int(np.sum(domain & (precrop == 5) & (postcrop != 5)))
+watergainpx = int(np.sum(domain & (precrop != 1) & (postcrop == 1)))
+waterlosspx = int(np.sum(domain & (precrop == 1) & (postcrop != 1)))
+sedimentgainpx = int(np.sum(domain & (precrop != 5) & (postcrop == 5)))
+sedimentlosspx = int(np.sum(domain & (precrop == 5) & (postcrop != 5)))
 
-    waternetm2 = (watergainpx - waterlosspx) * pxaream2
-    sedimentnetm2 = (sedimentgainpx - sedimentlosspx) * pxaream2
-    combinednetm2 = waternetm2 + sedimentnetm2
+waternetm2 = (watergainpx - waterlosspx) * pxaream2
+sedimentnetm2 = (sedimentgainpx - sedimentlosspx) * pxaream2
+combinednetm2 = waternetm2 + sedimentnetm2
 
-    canvasw, canvash = 2400, 1400
-    bg = (245, 245, 245)
-    panelbg = (255, 255, 255)
-    text = (25, 25, 25)
-    muted = (90, 90, 90)
+canvasw, canvash = 2600, 1400
+bg = (245, 245, 245)
+panelbg = (255, 255, 255)
+text = (25, 25, 25)
+muted = (90, 90, 90)
 
-    canvas = Image.new("RGB", (canvasw, canvash), bg)
-    draw = ImageDraw.Draw(canvas)
+canvas = Image.new("RGB", (canvasw, canvash), bg)
+draw = ImageDraw.Draw(canvas)
 
-    try:
-        fonttitle = ImageFont.truetype("arial.ttf", 50)
-        fontsub = ImageFont.truetype("arial.ttf", 30)
-        fontbody = ImageFont.truetype("arial.ttf", 24)
-    except OSError:
-        fonttitle = ImageFont.load_default()
-        fontsub = ImageFont.load_default()
-        fontbody = ImageFont.load_default()
+try:
+    fonttitle = ImageFont.truetype("arial.ttf", 56)
+    fontsub = ImageFont.truetype("arial.ttf", 34)
+    fontbody = ImageFont.truetype("arial.ttf", 28)
+except OSError:
+    fonttitle = ImageFont.load_default()
+    fontsub = ImageFont.load_default()
+    fontbody = ImageFont.load_default()
 
-    draw.text((60, 30), f"{figurelabel} ({titleyear})", fill=text, font=fonttitle)
-    draw.text((60, 95), f"Window: {predate} to {postdate} | Focus: active channel (water + channel sediment)", fill=muted, font=fontsub)
+draw.text((60, 30), f"{figurelabel} ({titleyear})", fill=text, font=fonttitle)
+draw.text((60, 95), f"Window: {predate} to {postdate} | Focus: active channel (water + channel sediment)", fill=muted, font=fontsub)
 
-    panelw, panelh = 680, 980
-    y0 = 180
-    xpre = 60
-    xpost = xpre + panelw + 40
-    xchange = xpost + panelw + 40
+panelw, panelh = 680, 980
+y0 = 180
+xpre = 60
+xpost = xpre + panelw + 40
+xchange = xpost + panelw + 40
 
-    def drawPanel(x: int, title: str, rgb: np.ndarray) -> None:
-        draw.rounded_rectangle((x, y0, x + panelw, y0 + panelh), radius=18, fill=panelbg, outline=(210, 210, 210), width=2)
-        draw.text((x + 20, y0 + 16), title, fill=text, font=fontsub)
-        im = renderPanelImage(
-            rgb,
-            insidecrop,
-            displaycrop,
-            panelw - 40,
-            panelh - 120,
-        )
-        canvas.paste(im, (x + 20, y0 + 80))
+for x, title, rgb, z in [
+    (xpre, f"A. Pre-event classification ({predate})", prergb, None),
+    (xpost, f"B. Post-event classification ({postdate})", postrgb, None),
+    (xchange, "C. Active-channel change", changergb, findZoomBoxes(changeeval, rivercrop, insidecrop)),
+]:
+    draw.rounded_rectangle((x, y0, x + panelw, y0 + panelh), radius=18, fill=panelbg, outline=(210, 210, 210), width=2)
+    draw.text((x + 20, y0 + 16), title, fill=text, font=fontsub)
+    sourceheight, sourcewidth = rgb.shape[:2]
+    mapw, maph = panelw - 40, panelh - 120
+    im = renderPanelImage(rgb, insidecrop, displaycrop, mapw, maph)
+    canvas.paste(im, (x + 20, y0 + 80))
+    if z is not None:
+        insetw, inseth = 220, 250
+        insetx = x + panelw + 10
+        for index, (zx1, zy1, zx2, zy2) in enumerate(z):
+            sx1 = int(zx1 * mapw / sourcewidth)
+            sy1 = int(zy1 * maph / sourceheight)
+            sx2 = int(zx2 * mapw / sourcewidth)
+            sy2 = int(zy2 * maph / sourceheight)
+            boxleft, boxtop = x + 20 + sx1, y0 + 80 + sy1
+            boxright, boxbottom = x + 20 + sx2, y0 + 80 + sy2
+            insety = y0 + 95 + index * 285
+            draw.rectangle((boxleft, boxtop, boxright, boxbottom), outline=(210, 35, 45), width=5)
+            inset = im.crop((sx1, sy1, sx2, sy2)).resize((insetw, inseth), Image.Resampling.NEAREST)
+            draw.line((boxright, (boxtop + boxbottom) // 2, insetx, insety + inseth // 2), fill=(210, 35, 45), width=5)
+            draw.rectangle((insetx - 4, insety - 4, insetx + insetw + 4, insety + inseth + 4), fill=(255, 255, 255), outline=(210, 35, 45), width=5)
+            canvas.paste(inset, (insetx, insety))
 
-    drawPanel(xpre, f"A. Pre-event classification ({predate})", prergb)
-    drawPanel(xpost, f"B. Post-event classification ({postdate})", postrgb)
-    drawPanel(xchange, "C. Active-channel change (cleaned)", changergb)
+stripy = y0 + panelh + 20
+striph = 180
+draw.rounded_rectangle((60, stripy, canvasw - 60, stripy + striph), radius=14, fill=panelbg, outline=(210, 210, 210), width=2)
 
-    stripy = y0 + panelh + 20
-    striph = 180
-    draw.rounded_rectangle((60, stripy, canvasw - 60, stripy + striph), radius=14, fill=panelbg, outline=(210, 210, 210), width=2)
+draw.text((90, stripy + 20), f"Water net change: {formatSignedM2(waternetm2)}", fill=(0, 120, 60), font=fontbody)
+draw.text((90, stripy + 62), f"Sediment net change: {formatSignedM2(sedimentnetm2)}", fill=(170, 30, 30), font=fontbody)
+draw.text((90, stripy + 104), f"Combined active-channel net change: {formatSignedM2(combinednetm2)}", fill=muted, font=fontbody)
 
-    draw.text((90, stripy + 20), f"Water net change: {formatSignedM2(waternetm2)}", fill=(0, 120, 60), font=fontbody)
-    draw.text((90, stripy + 62), f"Sediment net change: {formatSignedM2(sedimentnetm2)}", fill=(170, 30, 30), font=fontbody)
-    draw.text((90, stripy + 104), f"Combined active-channel net change: {formatSignedM2(combinednetm2)}", fill=muted, font=fontbody)
+legendx = 1200
+draw.text((legendx, stripy + 12), "Class legend (Panels A and B):", fill=text, font=fontbody)
 
-    legendx = 1200
-    draw.text((legendx, stripy + 18), "Change legend:", fill=text, font=fontbody)
+class_positions = [(1200, 1), (1480, 2), (1760, 3), (1200, 4), (1480, 5), (1760, 255)]
+for class_x, value in class_positions:
+    class_y = stripy + 52 if value <= 3 else stripy + 102
+    draw.rectangle((class_x, class_y, class_x + 24, class_y + 24), fill=classcolors[value], outline=(30, 30, 30))
+    draw.text((class_x + 32, class_y - 4), classlabels[value], fill=text, font=fontbody)
 
-    legenditems = [
-        ("Gain (0 -> 1)", changecolors[1]),
-        ("Loss (1 -> 0)", changecolors[2]),
-        ("No change", changecolors[0]),
-    ]
+legendx = 2050
+draw.text((legendx, stripy + 12), "Change legend (Panel C):", fill=text, font=fontbody)
 
-    lx, ly = legendx, stripy + 56
-    for label, col in legenditems:
-        draw.rectangle((lx, ly, lx + 28, ly + 28), fill=col, outline=(30, 30, 30))
-        draw.text((lx + 40, ly + 2), label, fill=text, font=fontbody)
-        ly += 38
+legenditems = [
+    ("Gain (0 -> 1)", changecolors[1]),
+    ("Loss (1 -> 0)", changecolors[2]),
+    ("River corridor", rivercolor),
+]
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    canvas.save(OUT, format="PNG")
-    print(f"Wrote figure: {OUT}")
+lx, ly = legendx, stripy + 56
+for label, col in legenditems:
+    draw.rectangle((lx, ly, lx + 28, ly + 28), fill=col, outline=(30, 30, 30))
+    draw.text((lx + 40, ly + 2), label, fill=text, font=fontbody)
+    ly += 38
 
-
-if __name__ == "__main__":
-    main()
+OUT.parent.mkdir(parents=True, exist_ok=True)
+canvas.save(OUT, format="PNG")
+print(f"Wrote figure: {OUT}")
 
