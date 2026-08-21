@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 from pathlib import Path
 import csv
 import numpy as np
@@ -6,7 +6,8 @@ import tifffile
 from dataclasses import dataclass
 from datetime import datetime
 
-
+#Paths, it relies on CRsummary.csv made by ChannelRainfall.py; creates CRstats.csv
+#Also relies on having the classified imagery this is to be ran after dualrun.ps1 (or the individuak ones) and ChannelRainfall.py
 
 rootdir = Path(__file__).resolve().parents[2]
 inputsummarycsv = rootdir / "04_Analysis" / "channelrainfallsum" / "CRsummary.csv"
@@ -20,6 +21,9 @@ GEOMROOTS = {
 TARGETMASKS = ("active_channel_mask", "channel_sediment_mask")
 
 
+#the class to hold the inputs rows
+#the function reads the input csv and converts values appropriately also filters out unused stuff
+
 @dataclass
 class Record:
     seriesid: str
@@ -32,15 +36,6 @@ class Record:
     lossm2: float
     changem2: float
 
-def toFloat(value: str) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float("nan")
-
-
-def parseDate(value: str) -> datetime:
-    return datetime.strptime(value, "%Y-%m-%d")
 def loadRecords(path: Path) -> list[Record]:
     rows: list[Record] = []
     with path.open(newline="", encoding="utf-8") as handle:
@@ -49,12 +44,19 @@ def loadRecords(path: Path) -> list[Record]:
             mask = row.get("mask", "")
             if mask not in TARGETMASKS:
                 continue
+
+            def toFloat(value: str) -> float:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    return float("nan")
+
             rows.append(
                 Record(
                     seriesid=row.get("series_id", ""),
                     mask=mask,
-                    predate=parseDate(row["pre_date"]),
-                    postdate=parseDate(row["post_date"]),
+                    predate=datetime.strptime(row["pre_date"], "%Y-%m-%d"),
+                    postdate=datetime.strptime(row["post_date"], "%Y-%m-%d"),
                     rainmminterval=toFloat(row.get("rain_mm_interval", "nan")),
                     intervaldays=toFloat(row.get("interval_days", "nan")),
                     gainm2=toFloat(row.get("gain_area_m2", "nan")),
@@ -65,14 +67,9 @@ def loadRecords(path: Path) -> list[Record]:
     rows.sort(key=lambda rec: (rec.seriesid, rec.predate, rec.mask))
     return rows
 
+#These 3 following functions are just statistical analysis functions
+#permutation testing, cliff's delta and benjamini hochberg correction
 
-def chooseAreaUnit(records: list[Record]) -> tuple[float, str]:
-    values = []
-    for rec in records:
-        values.extend([abs(rec.gainm2), abs(rec.lossm2), abs(rec.changem2)])
-    if not values:
-        return 1.0, "m2"
-    return (1_000_000.0, "km2") if np.nanmedian(values) >= 2_000_000.0 else (1.0, "m2")
 def permutationPvalueMeanDiff(a: np.ndarray, b: np.ndarray, nperm: int = 12000, seed: int = 7) -> float:
     rng = np.random.default_rng(seed)
     a = a[np.isfinite(a)]
@@ -90,7 +87,6 @@ def permutationPvalueMeanDiff(a: np.ndarray, b: np.ndarray, nperm: int = 12000, 
             count += 1
     return float((count + 1) / (nperm + 1))
 
-
 def cliffsDelta(a: np.ndarray, b: np.ndarray) -> float:
     a = a[np.isfinite(a)]
     b = b[np.isfinite(b)]
@@ -99,6 +95,7 @@ def cliffsDelta(a: np.ndarray, b: np.ndarray) -> float:
     gt = np.sum(b[:, None] > a[None, :])
     lt = np.sum(b[:, None] < a[None, :])
     return float((gt - lt) / (a.size * b.size))
+
 def benjaminiHochberg(pvals: list[float]) -> list[float]:
     m = len(pvals)
     qvals = [float("nan")] * m
@@ -115,32 +112,37 @@ def benjaminiHochberg(pvals: list[float]) -> list[float]:
         qvals[idx] = float(min(1.0, max(0.0, adjusted[i])))
     return qvals
 
+#function specifically to convert water coverage tifs to float arrays
 
-def waterCoveragePercent(maskpath: Path) -> float:
-    arr = tifffile.imread(maskpath)
-    valid = arr != 255
-    nvalid = int(np.count_nonzero(valid))
-    if nvalid == 0:
-        return float("nan")
-    nwater = int(np.count_nonzero(arr[valid] == 1))
-    return (100.0 * nwater) / nvalid
 def loadWaterCoverages() -> dict[str, np.ndarray]:
     out: dict[str, np.ndarray] = {}
     for seriesid, root in GEOMROOTS.items():
-        values = [waterCoveragePercent(path) for path in sorted(root.glob("**/*_water_mask.tif"))]
+        values: list[float] = []
+        for path in sorted(root.glob("**/*_water_mask.tif")):
+            arr = tifffile.imread(path)
+            valid = arr != 255
+            nvalid = int(np.count_nonzero(valid))
+            if nvalid == 0:
+                values.append(float("nan"))
+                continue
+            nwater = int(np.count_nonzero(arr[valid] == 1))
+            values.append((100.0 * nwater) / nvalid)
         out[seriesid] = np.array(values, dtype=float)
     return out
 
 
-def seriesRecords(records: list[Record], seriesid: str) -> list[Record]:
-    return [record for record in records if record.seriesid == seriesid]
-def computeRows(records: list[Record]) -> list[dict[str, object]]:
-    areafactor, areaunit = chooseAreaUnit(records)
-    rows: list[dict[str, object]] = []
+#per row this function will calc medians, folds, pvalues, stat tests whatever and return them as dicts for the csv
 
-    longrows = seriesRecords(records, "long_series")
-    rows2023 = seriesRecords(records, "2023")
-    rows2025 = seriesRecords(records, "2025")
+def rowiter(records: list[Record]) -> list[dict[str, object]]:
+    values = []
+    for rec in records:
+        values.extend([abs(rec.gainm2), abs(rec.lossm2), abs(rec.changem2)])
+    areafactor = 1_000_000.0 if values and np.nanmedian(values) >= 2_000_000.0 else 1.0
+    areaunit = "km2" if areafactor == 1_000_000.0 else "m2"
+    rows: list[dict[str, object]] = []
+    longrows = [record for record in records if record.seriesid == "long_series"]
+    rows2023 = [record for record in records if record.seriesid == "2023"]
+    rows2025 = [record for record in records if record.seriesid == "2025"]
 
     cover = loadWaterCoverages()
     covlong = cover.get("long_series", np.array([], dtype=float))
@@ -150,7 +152,6 @@ def computeRows(records: list[Record]) -> list[dict[str, object]]:
     medlong = float(np.nanmedian(covlong)) if covlong.size else float("nan")
     med2023 = float(np.nanmedian(cov2023)) if cov2023.size else float("nan")
     med2025 = float(np.nanmedian(cov2025)) if cov2025.size else float("nan")
-
     fold2023 = float((med2023 + 1e-6) / (medlong + 1e-6)) if np.isfinite(medlong) and np.isfinite(med2023) else float("nan")
     fold2025 = float((med2025 + 1e-6) / (medlong + 1e-6)) if np.isfinite(medlong) and np.isfinite(med2025) else float("nan")
 
@@ -174,8 +175,8 @@ def computeRows(records: list[Record]) -> list[dict[str, object]]:
             "q_2025": float("nan"),
         }
     )
-
-    for mask in targetmasks:
+    # repeats it for both the two masks 
+    for mask in TARGETMASKS:
         def valuesForMode(source: list[Record], mode: str) -> np.ndarray:
             values = []
             for record in source:
@@ -240,6 +241,8 @@ def computeRows(records: list[Record]) -> list[dict[str, object]]:
         rows[rowindex][key] = qvalue
     return rows
 
+#the output writer
+
 def writeCsv(rows: list[dict[str, object]], path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = [
@@ -266,13 +269,8 @@ def writeCsv(rows: list[dict[str, object]], path: Path) -> None:
         for row in rows:
             writer.writerow(row)
 
-def main() -> None:
-    records = loadRecords(inputsummarycsv)
-    rows = computeRows(records)
-    writeCsv(rows, outputstatscsv)
-    print(f"wrote {outputstatscsv}")
-
-#what if i streamlined all files into one execute uhhhhh note to self
-if __name__ == "__main__":
-    main()
-#note to self note to self note to self
+#just runs the functions above
+records = loadRecords(inputsummarycsv)
+rows = rowiter(records)
+writeCsv(rows, outputstatscsv)
+print(f"wrote {outputstatscsv}")
