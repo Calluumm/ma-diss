@@ -15,29 +15,11 @@ from shapely.geometry import Polygon, box
 from shapely.ops import transform as shapely_transform
 import tifffile
 
-#file acquistion i could change it to something solid but it remains as this while i pass a lot of files through it
+#identifies the raster naming pattern and also sets the 2 masks we work with here
 pairre = re.compile(r"change_class_clean_(\d{4}-\d{2}-\d{2})_to_(\d{4}-\d{2}-\d{2})\.tif$")
 TARGET_MASKS = {"active_channel_mask", "channel_sediment_mask"}
 
-
-def getroot() -> Path:
-    return Path(__file__).resolve().parents[2]
-def parsedate(value: str) -> date:
-    return datetime.strptime(value, "%Y-%m-%d").date()
-
-def inferseriesid(changeroot: Path, explicit: str | None = None) -> str:
-    if explicit and explicit.strip():
-        return explicit.strip()
-    name = changeroot.name
-    lowered = name.lower()
-    if lowered == "sentinel2_changeframework":
-        return "long_series"
-    suffix_match = re.search(r"(19|20)\d{2}$", name)
-    if suffix_match:
-        return suffix_match.group(0)
-    return name
-
-
+#reads the rainfall csv we got from downloading chirps and makes it a load of dicts
 def loadchirps(path: Path) -> list[dict]:
     with path.open(newline="", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -48,36 +30,17 @@ def loadchirps(path: Path) -> list[dict]:
                     "id": row["id"],
                     "lon": float(row["lon"]),
                     "lat": float(row["lat"]),
-                    "date": parsedate(row["date"]),
+                    "date": datetime.strptime(row["date"], "%Y-%m-%d").date(),
                     "chirps": float(row["chirps"]),
                 }
             )
     return rows
 
-def loadmonthly(chirps: list[dict]) -> dict[tuple[int, int], float]:
-    totals: dict[tuple[int, int], float] = defaultdict(float)
-    for row in chirps:
-        totals[(row["date"].year, row["date"].month)] += row["chirps"]
-    return dict(totals)
-def loadmam(path: Path) -> dict[int, float]:
-    result: dict[int, float] = {}
-    with path.open(newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            result[int(row["year"])] = float(row["total_mm_MAM"])
-    return result
-
-
+#for shapefile clipping we have to turn the shapefiles into polygons for py and re project the crs from the prj file
 def shapeToPolygon(shape: shapefile.Shape) -> Polygon:
     points = shape.points
-    if not points:
-        raise ValueError("empty catchment geometry")
-
     parts = list(shape.parts) + [len(points)]
     rings = [points[start:end] for start, end in zip(parts[:-1], parts[1:]) if end - start >= 3]
-    if not rings:
-        raise ValueError("catchment geometry does not contain a valid polygon ring")
-
     shell = rings[0]
     holes = rings[1:] if len(rings) > 1 else []
     return Polygon(shell, holes)
@@ -85,7 +48,6 @@ def shapeToPolygon(shape: shapefile.Shape) -> Polygon:
 def loadshapes(path: Path) -> tuple[list[Polygon], CRS | None]:
     reader = shapefile.Reader(str(path))
     shapes = [shapeToPolygon(shape) for shape in reader.shapes()]
-
     crs = None
     prjpath = path.with_suffix(".prj")
     if prjpath.exists():
@@ -105,20 +67,15 @@ def readRaster(path: Path) -> tuple[np.ndarray, dict]:
         data = page.asarray()
         if data.ndim == 3:
             data = data[0]
-
         scale_tag = page.tags.get(33550)
         tie_tag = page.tags.get(33922)
         geokey_tag = page.tags.get(34735)
-
-        if scale_tag is None or tie_tag is None or geokey_tag is None:
-            raise ValueError(f"missing GeoTIFF georeference tags in {path.name}")
 
         meta = {
             "scale": tuple(float(value) for value in scale_tag.value),
             "tie": tuple(float(value) for value in tie_tag.value),
             "geokeys": tuple(int(value) for value in geokey_tag.value),
         }
-
     return data.astype(np.uint8), meta
 
 def parseGeotiffCrs(geokeys: tuple[int, ...]) -> CRS | None:
@@ -140,7 +97,7 @@ def parseGeotiffCrs(geokeys: tuple[int, ...]) -> CRS | None:
             except Exception:
                 return None
     return None
-
+#this one transforms the raster to a tuple of floats for pixel coordinates
 def rasterAffine(meta: dict) -> tuple[float, float, float, float, float, float]:
     scale_x, scale_y, _ = meta["scale"]
     tie_col, tie_row, _tie_z, tie_x, tie_y, _tie_z2 = meta["tie"]
@@ -156,13 +113,11 @@ def rasterPixelAreaM2(meta: dict, raster_crs: CRS | None, center_lat: float | No
         meters_per_deg_lat = 111132.92
         meters_per_deg_lon = 111320.0 * cos(lat * pi / 180.0)
         return abs(scale_x) * meters_per_deg_lon * abs(scale_y) * meters_per_deg_lat
-
     return abs(scale_x) * abs(scale_y)
 
 def transformGeometry(geometry: Polygon, source_crs: CRS | None, target_crs: CRS | None) -> Polygon:
     if source_crs is None or target_crs is None or source_crs == target_crs:
         return geometry
-
     transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
     return shapely_transform(lambda x, y, z=None: transformer.transform(x, y), geometry)
 
@@ -184,7 +139,7 @@ def explodePolygons(geometry) -> list[Polygon]:
             result.extend(explodePolygons(part))
         return result
     return []
-
+#defines trunk for analysis
 def buildTrunkcorridor(shapes: list[Polygon], sourcecrs: CRS | None) -> list[Polygon]:
     catchment = geometryUnion(shapes)
     targetcrs = CRS.from_epsg(4326)
@@ -204,16 +159,15 @@ def buildTrunkcorridor(shapes: list[Polygon], sourcecrs: CRS | None) -> list[Pol
         raise RuntimeError("trunk corridor does not intersect the catchment")
     return corridorpolys
 
+#takes filename date pairs and returns them as tuples of dates
+
 def parsepair(path: Path) -> tuple[date, date]:
     match = pairre.search(path.name)
     if not match:
         raise ValueError(f"unable to parse date pair from filename: {path.name}")
-    pre = parsedate(match.group(1))
-    post = parsedate(match.group(2))
+    pre = datetime.strptime(match.group(1), "%Y-%m-%d").date()
+    post = datetime.strptime(match.group(2), "%Y-%m-%d").date()
     return pre, post
-
-def findpairs(root: Path) -> list[Path]:
-    return sorted(root.glob("**/change_class_clean_*.tif"))
 
 def clipcount(rasterpath: Path, shapes: list[Polygon] | None, shapecrs) -> dict:
     values, meta = readRaster(rasterpath)
@@ -277,48 +231,9 @@ def clipcount(rasterpath: Path, shapes: list[Polygon] | None, shapecrs) -> dict:
         "pixel_area_m2": areapixelm2,
     }
 
-#note to self to recheck the chirps outputs
-def rainbetween(chirps: list[dict], start: date, end: date) -> float:
-    return float(sum(row["chirps"] for row in chirps if start <= row["date"] <= end))
-def rain30(chirps: list[dict], end: date) -> float:
-    start = end - timedelta(days=29)
-    return float(sum(row["chirps"] for row in chirps if start <= row["date"] <= end))
+#csv writer for output and summary
+#next turns raw raster country into the interval records and runs statistical tests for each mask and series
 
-#statisticccccals
-def pearson(xs: list[float], ys: list[float]) -> tuple[float, float]:
-    if len(xs) != len(ys) or len(xs) < 2:
-        return float("nan"), float("nan")
-
-    mx = mean(xs)
-    my = mean(ys)
-    num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
-    denx = sqrt(sum((x - mx) ** 2 for x in xs))
-    deny = sqrt(sum((y - my) ** 2 for y in ys))
-    if denx == 0 or deny == 0:
-        return float("nan"), float("nan")
-
-    return num / (denx * deny), float("nan")
-#spearmans ctrl F rank
-def ranks(values: list[float]) -> list[float]:
-    order = sorted(range(len(values)), key=lambda idx: values[idx])
-    result = [0.0] * len(values)
-    i = 0
-    while i < len(values):
-        j = i
-        while j + 1 < len(values) and values[order[j + 1]] == values[order[i]]:
-            j += 1
-        rank = (i + j + 2) / 2.0
-        for k in range(i, j + 1):
-            result[order[k]] = rank
-        i = j + 1
-    return result
-def spearman(xs: list[float], ys: list[float]) -> tuple[float, float]:
-    if len(xs) != len(ys) or len(xs) < 2:
-        return float("nan"), float("nan")
-    return pearson(ranks(xs), ranks(ys))
-
-############################################################## 
-#above func keep as is refactor below when free
 def writerows(path: Path, records: list[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames = list(records[0].keys()) if records else []
@@ -338,7 +253,7 @@ def buildrecords(
     shapes: list[Polygon] | None,
     shapecrs: CRS | None,
 ) -> list[dict]:
-    pairs = findpairs(changepath)
+    pairs = sorted(changepath.glob("**/change_class_clean_*.tif"))
     if not pairs:
         return []
 
@@ -347,8 +262,8 @@ def buildrecords(
         pre, post = parsepair(rasterpath)
         counts = clipcount(rasterpath, shapes, shapecrs)
 
-        raininterval = rainbetween(chirps, pre, post)
-        rain30d = rain30(chirps, post)
+        raininterval = float(sum(row["chirps"] for row in chirps if pre <= row["date"] <= post))
+        rain30d = float(sum(row["chirps"] for row in chirps if (post - timedelta(days=29)) <= row["date"] <= post))
 
         preyear = int(pre.year)
         postyear = int(post.year)
@@ -407,15 +322,7 @@ def buildrecords(
 
     return records
 
-def tofloat(value) -> float:
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return float("nan")
-def isfinite(value: float) -> bool:
-    return not np.isnan(value) and not np.isinf(value)
-
-def buildstats(records: list[dict], maxinvalidfraction: float, minsamples: int) -> list[dict]:
+def statbui(records: list[dict], maxinvalidfraction: float, minsamples: int) -> list[dict]:
     predictor_cols = [
         "rain_mm_interval",
         "rain_intensity_mm_day",
@@ -437,25 +344,80 @@ def buildstats(records: list[dict], maxinvalidfraction: float, minsamples: int) 
         grouped[(str(row.get("series_id", "")), str(row.get("mask", "")))].append(row)
     stats_rows: list[dict] = []
     for (series_id, mask), group_rows in sorted(grouped.items()):
-        qc_rows = [
-            row for row in group_rows
-            if isfinite(tofloat(row.get("invalid_fraction_total")))
-            and tofloat(row.get("invalid_fraction_total")) <= maxinvalidfraction
-        ]
+        qc_rows = []
+        for row in group_rows:
+            invalid_fraction = row.get("invalid_fraction_total")
+            try:
+                invalid_fraction_value = float(invalid_fraction)
+            except (TypeError, ValueError):
+                invalid_fraction_value = float("nan")
+            if not np.isnan(invalid_fraction_value) and not np.isinf(invalid_fraction_value) and invalid_fraction_value <= maxinvalidfraction:
+                qc_rows.append(row)
+
         for predictor in predictor_cols:
             for response in response_cols:
                 xs: list[float] = []
                 ys: list[float] = []
                 for row in qc_rows:
-                    x = tofloat(row.get(predictor))
-                    y = tofloat(row.get(response))
-                    if isfinite(x) and isfinite(y):
+                    try:
+                        x = float(row.get(predictor))
+                    except (TypeError, ValueError):
+                        x = float("nan")
+                    try:
+                        y = float(row.get(response))
+                    except (TypeError, ValueError):
+                        y = float("nan")
+                    if not np.isnan(x) and not np.isinf(x) and not np.isnan(y) and not np.isinf(y):
                         xs.append(x)
                         ys.append(y)
                 n = len(xs)
                 if n >= minsamples:
-                    rho, _ = spearman(xs, ys)
-                    r, _ = pearson(xs, ys)
+                    if len(xs) != len(ys) or len(xs) < 2:
+                        rho = float("nan")
+                        r = float("nan")
+                    else:
+                        order_x = sorted(range(len(xs)), key=lambda idx: xs[idx])
+                        order_y = sorted(range(len(ys)), key=lambda idx: ys[idx])
+                        rank_x = [0.0] * len(xs)
+                        rank_y = [0.0] * len(ys)
+                        i = 0
+                        while i < len(xs):
+                            j = i
+                            while j + 1 < len(xs) and xs[order_x[j + 1]] == xs[order_x[i]]:
+                                j += 1
+                            rank = (i + j + 2) / 2.0
+                            for k in range(i, j + 1):
+                                rank_x[order_x[k]] = rank
+                            i = j + 1
+                        i = 0
+                        while i < len(ys):
+                            j = i
+                            while j + 1 < len(ys) and ys[order_y[j + 1]] == ys[order_y[i]]:
+                                j += 1
+                            rank = (i + j + 2) / 2.0
+                            for k in range(i, j + 1):
+                                rank_y[order_y[k]] = rank
+                            i = j + 1
+
+                        mx = mean(xs)
+                        my = mean(ys)
+                        num = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+                        denx = sqrt(sum((x - mx) ** 2 for x in xs))
+                        deny = sqrt(sum((y - my) ** 2 for y in ys))
+                        if denx == 0 or deny == 0:
+                            r = float("nan")
+                        else:
+                            r = num / (denx * deny)
+
+                        mx_rank = mean(rank_x)
+                        my_rank = mean(rank_y)
+                        num_rank = sum((x - mx_rank) * (y - my_rank) for x, y in zip(rank_x, rank_y))
+                        denx_rank = sqrt(sum((x - mx_rank) ** 2 for x in rank_x))
+                        deny_rank = sqrt(sum((y - my_rank) ** 2 for y in rank_y))
+                        if denx_rank == 0 or deny_rank == 0:
+                            rho = float("nan")
+                        else:
+                            rho = num_rank / (denx_rank * deny_rank)
                 else:
                     rho = float("nan")
                     r = float("nan")
@@ -474,7 +436,10 @@ def buildstats(records: list[dict], maxinvalidfraction: float, minsamples: int) 
                 )
     return stats_rows
 
-def collectrecordsforroot(
+#full series of all reocrds into one csv for all series all masks
+#again uses all my filepaths and the input chirps as outputs
+
+def recordfull(
     changeroot: Path,
     seriesid: str,
     chirps: list[dict],
@@ -512,99 +477,90 @@ def collectrecordsforroot(
             print(f"no change rasters found under {changepath}; skipping")
             continue
         for row in records:
-            invalid_fraction = tofloat(row.get("invalid_fraction_total"))
-            row["excluded_by_invalid_qc"] = int(isfinite(invalid_fraction) and invalid_fraction > maxinvalidfraction)
+            invalid_fraction = row.get("invalid_fraction_total")
+            try:
+                invalid_fraction_value = float(invalid_fraction)
+            except (TypeError, ValueError):
+                invalid_fraction_value = float("nan")
+            row["excluded_by_invalid_qc"] = int(not np.isnan(invalid_fraction_value) and not np.isinf(invalid_fraction_value) and invalid_fraction_value > maxinvalidfraction)
         combinedrecords.extend(records)
     return combinedrecords
-#git generic-ify the paths
-#all these are my paths there is probably a good way to set this upppp on git but ive got these all like this id usually generic C:/bla/bla but there are so many
-def main() -> None:
-    root = getroot()
-    outputdir = root / "04_Analysis" / "channelrainfallsum"
-    chirpspath = root / "02_Data" / "01_Raw" / "CHIRPS" / "palanan_chirps_2016-2026.csv"
-    mampath = root / "02_Data" / "01_Raw" / "CHIRPS" / "yearly_MAM_rainfall.csv"
-    shapepath = root / "02_Data" / "01_Raw" / "palanan-rough.shp"
-    contextmode = "yearlymam"
-    maxinvalidfraction = 0.30
-    minsamples = 4
-    seriesconfigs = [
-        {
-            "series_id": "long_series",
-            "change_root": root / "02_Data" / "02_Processed" / "Sentinel2_ChangeFramework",
-            "output": outputdir / "channel_rainfall_summary_long.csv",
-            "stats_output": outputdir / "channel_rainfall_summary_long_stats.csv",
-        },
-        {
-            "series_id": "2023",
-            "change_root": root / "02_Data" / "02_Processed" / "Sentinel2_ChangeFramework_2023",
-            "output": outputdir / "channel_rainfall_summary_2023.csv",
-            "stats_output": outputdir / "channel_rainfall_summary_2023_stats.csv",
-        },
-        {
-            "series_id": "2025",
-            "change_root": root / "02_Data" / "02_Processed" / "Sentinel2_ChangeFramework_2025",
-            "output": outputdir / "channel_rainfall_summary_2025.csv",
-            "stats_output": outputdir / "channel_rainfall_summary_2025_stats.csv",
-        },
-    ]
-#end paths here
-    chirps = loadchirps(chirpspath)
-    yearlymode = contextmode in {"yearlymam", "yearly_mam"}
-    mam = loadmam(mampath) if yearlymode else {}
-    monthly = loadmonthly(chirps) if contextmode == "monthly" else {}
+root = Path(__file__).resolve().parents[2]
+outputdir = root / "04_Analysis" / "channelrainfallsum"
+chirpspath = root / "02_Data" / "01_Raw" / "CHIRPS" / "palanan_chirps_2016-2026.csv"
+mampath = root / "02_Data" / "01_Raw" / "CHIRPS" / "yearly_MAM_rainfall.csv"
+shapepath = root / "02_Data" / "01_Raw" / "palanan-rough.shp"
+contextmode = "yearlymam"
+maxinvalidfraction = 0.30
+minsamples = 4
+seriesconfigs = [
+    {
+        "series_id": "long_series",
+        "change_root": root / "02_Data" / "02_Processed" / "Sentinel2_ChangeFramework",
+        "output": outputdir / "channel_rainfall_summary_long.csv",
+        "stats_output": outputdir / "channel_rainfall_summary_long_stats.csv",
+    },
+    {
+        "series_id": "2023",
+        "change_root": root / "02_Data" / "02_Processed" / "Sentinel2_ChangeFramework_2023",
+        "output": outputdir / "channel_rainfall_summary_2023.csv",
+        "stats_output": outputdir / "channel_rainfall_summary_2023_stats.csv",
+    },
+    {
+        "series_id": "2025",
+        "change_root": root / "02_Data" / "02_Processed" / "Sentinel2_ChangeFramework_2025",
+        "output": outputdir / "channel_rainfall_summary_2025.csv",
+        "stats_output": outputdir / "channel_rainfall_summary_2025_stats.csv",
+    },
+]
 
-    if not shapepath.exists():
-        raise SystemExit(f"shape not found at {shapepath}")
+chirps = loadchirps(chirpspath)
+yearlymode = contextmode in {"yearlymam", "yearly_mam"}
+if yearlymode:
+    mam = {}
+    with mampath.open(newline="", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            mam[int(row["year"])] = float(row["total_mm_MAM"])
+else:
+    mam = {}
+if contextmode == "monthly":
+    monthly = defaultdict(float)
+    for row in chirps:
+        monthly[(row["date"].year, row["date"].month)] += row["chirps"]
+    monthly = dict(monthly)
+else:
+    monthly = {}
 
-    shapes, shapecrs = loadshapes(shapepath)
-    shapes = buildTrunkcorridor(shapes, shapecrs)
-    shapecrs = CRS.from_epsg(4326)
+if not shapepath.exists():
+    raise SystemExit(f"shape not found at {shapepath}")
 
-    allrecords: list[dict] = []
+shapes, shapecrs = loadshapes(shapepath)
+shapes = buildTrunkcorridor(shapes, shapecrs)
+shapecrs = CRS.from_epsg(4326)
 
-    for cfg in seriesconfigs:
-        seriesid = str(cfg["series_id"])
-        changeroot = Path(cfg["change_root"])
-        outputpath = Path(cfg["output"])
-        statsoutputpath = Path(cfg["stats_output"])
+allrecords: list[dict] = []
 
-        records = collectrecordsforroot(
-            changeroot=changeroot,
-            seriesid=seriesid,
-            chirps=chirps,
-            mam=mam,
-            monthly=monthly,
-            contextmode=contextmode,
-            shapes=shapes,
-            shapecrs=shapecrs,
-            maxinvalidfraction=maxinvalidfraction,
-        )
+for cfg in seriesconfigs:
+    seriesid = str(cfg["series_id"])
+    changeroot = Path(cfg["change_root"])
+    outputpath = Path(cfg["output"])
+    statsoutputpath = Path(cfg["stats_output"])
 
-        if not records:
-            print(f"no records produced for series {seriesid}; skipping output")
-            continue
-
-        records = sorted(
-            records,
-            key=lambda row: (
-                row.get("series_id", ""),
-                row.get("mask", ""),
-                row.get("pre_date", ""),
-                row.get("post_date", ""),
-            ),
-        )
-        writerows(outputpath, records)
-        print(f"wrote {outputpath}")
-
-        statsrows = buildstats(records, maxinvalidfraction, max(minsamples, 2))
-        if statsrows:
-            writerows(statsoutputpath, statsrows)
-            print(f"wrote {statsoutputpath}")
-
-        allrecords.extend(records)
-
-    allrecords = sorted(
-        allrecords,
+    records = recordfull(
+        changeroot=changeroot,
+        seriesid=seriesid,
+        chirps=chirps,
+        mam=mam,
+        monthly=monthly,
+        contextmode=contextmode,
+        shapes=shapes,
+        shapecrs=shapecrs,
+        maxinvalidfraction=maxinvalidfraction,
+    )
+    
+    records = sorted(
+        records,
         key=lambda row: (
             row.get("series_id", ""),
             row.get("mask", ""),
@@ -612,15 +568,31 @@ def main() -> None:
             row.get("post_date", ""),
         ),
     )
-    combinedoutput = outputdir / "channel_rainfall_summary_all.csv"
-    combinedstatsoutput = outputdir / "channel_rainfall_summary_all_stats.csv"
-    writerows(combinedoutput, allrecords)
-    print(f"wrote {combinedoutput}")
+    writerows(outputpath, records)
+    print(f"wrote {outputpath}")
 
-    combinedstats = buildstats(allrecords, maxinvalidfraction, max(minsamples, 2))
-    if combinedstats:
-        writerows(combinedstatsoutput, combinedstats)
-        print(f"wrote {combinedstatsoutput}")
-#run from execute
-if __name__ == "__main__":
-    main()
+    statsrows = statbui(records, maxinvalidfraction, max(minsamples, 2))
+    if statsrows:
+        writerows(statsoutputpath, statsrows)
+        print(f"wrote {statsoutputpath}")
+
+    allrecords.extend(records)
+
+allrecords = sorted(
+    allrecords,
+    key=lambda row: (
+        row.get("series_id", ""),
+        row.get("mask", ""),
+        row.get("pre_date", ""),
+        row.get("post_date", ""),
+    ),
+)
+combinedoutput = outputdir / "channel_rainfall_summary_all.csv"
+combinedstatsoutput = outputdir / "channel_rainfall_summary_all_stats.csv"
+writerows(combinedoutput, allrecords)
+print(f"wrote {combinedoutput}")
+
+combinedstats = statbui(allrecords, maxinvalidfraction, max(minsamples, 2))
+if combinedstats:
+    writerows(combinedstatsoutput, combinedstats)
+    print(f"wrote {combinedstatsoutput}")
