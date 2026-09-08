@@ -9,7 +9,7 @@ param(
     [int]$cloudbufferradius = 2
 )
 
-#live laugh love OTB
+#live laugh love OTB, hardcoded as powershell didn't like my PATH very much
 function runOtb {
     param([string[]]$Args)
     & $script:otbLauncher @Args
