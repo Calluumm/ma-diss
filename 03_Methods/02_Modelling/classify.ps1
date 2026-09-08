@@ -7,7 +7,9 @@ $outputroot = "c:/Users/Student/Desktop/Masters/Dissertation/02_Data/02_Processe
 #Okay so this is a long list of various thresholds used to tweak the classifiers sensitivity
 #They are generally grouped by the class or index used by classifier 
 #the boolean ones are specific functions that I turned on or off while controlling sensitivity and iterating, the ones I ended up sacking off are gone hence why they are all true
-
+#While it looks quite convoluted and trust me it is, I was essentially checking the classified image then working on the thresholds around a specific feature I noticed was messing up, such as an interface between water and sediment
+#A lot of them end up doing the same thing and just dragging the file length, I chose not to further refactor this as I wanted to keep the exact same values I ultimately settled on and I'm not sure that would have been
+#the case if I tried to condense them down.
 $watermndwi = 0.06
 $waterndwi = 0.03
 $waterndvimx = 0.20
@@ -234,6 +236,7 @@ foreach ($scene in $scenes) {
     }
 
     #the main bulk, otb classifiers by the given thresholds and params, masks are then output out the bottom
+    #At the top here is primarily indices creation you'll see directly below here the band maths for ndvi, ndwi, etc... and then pushing some of the thresholds through them to suit them to palanan better
     runOtb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b7-im1b3)/(im1b7+im1b3+0.0001)", "-out", $ndvi, "float")
     runOtb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b2-im1b7)/(im1b2+im1b7+0.0001)", "-out", $ndwi, "float")
     runOtb -Args @("BandMath", "-il", $scene.FullName, "-exp", "(im1b2-im1b8)/(im1b2+im1b8+0.0001)", "-out", $mndwi, "float")
@@ -251,6 +254,9 @@ foreach ($scene in $scenes) {
     runOtb -Args @("BandMath", "-il", $water, $vegetation, $bare, $cloud, "-exp", "(im4b1==1)?4:((im1b1==255 or im2b1==255 or im3b1==255)?255:((im1b1==1)?1:((im2b1==1)?2:((im3b1==1)?3:0))))", "-out", $classmap, "uint8")
 
     #edge case fill, helps recover lost water pixels by checking adjacent pixels to existing water
+    #all of this recoveries and edge modifiers follow the same basics, I'm sure if I was more proficient in powershell there would be a more efficient way;
+    #I'll explain it on this one, I take the existing water class map binary and re-do the processes we've been going through but only on pixels adjacent to existing water
+    #This can then be made more agressive or more/less targetting in some cases
     if ($applywateredgercvy) {
         $edger = [Math]::Max(1, $wateredger)
         $waterseed = Join-Path $sceneout ("{0}_water_seed_bin.tif" -f $datelabel)
@@ -337,7 +343,8 @@ foreach ($scene in $scenes) {
         Remove-Item -Path $channelpriorraw, $channelpriordil, $channelwaterseed, $channelwaterseeddil, $classchannelsplit -Force
     }
 
-    #checks single pixels and cleans them if needed
+    #checks single pixels say one pixel of water in a sea of vegetation to more agressively check it against its surroundings
+    #specifically in the channel
     if ($applysinglepixelcleanup) {
         $cleanuprad = [Math]::Max(1, $cleanupr)
         $waterseed = Join-Path $sceneout ("{0}_cleanup_water_seed.tif" -f $datelabel)
@@ -450,7 +457,7 @@ foreach ($scene in $scenes) {
         Move-Item -Path $classfinal0 -Destination $classmap -Force
         Remove-Item -Path $finalpriorraw, $finalpriordil, $classfinal0 -Force
     }
-    #water continuity check, basically triple checks where water appears to fragment
+    #water continuity check, basically triple checks where water appears to fragment, most common on nighttime imagery to be needed !
     if ($applywatercntyrcvy) {
         $contr = [Math]::Max(1, $watercntyr)
         $contpriorr = [Math]::Max(1, $watercntypriorr)
@@ -540,5 +547,6 @@ foreach ($scene in $scenes) {
 #
 #Ultimately it reads as a lot but it's just a series of recovery steps applied to a class map to try "fix" classification
 #Classification itself is only the first few otb calls its then re-classifying itself
+#As stated at the top it's far more thresholds than necessary but to preserve my "end state" i felt I couldn't remove them in refactoring or condense them otherwise risk checking a completely different class map on re-run
 #
 Write-Output "classification set to $outputroot"
